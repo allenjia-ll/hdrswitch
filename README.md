@@ -1,4 +1,4 @@
-# m27p6s-hdr
+# HDR Switch
 
 Toggle HDR, the color profile and the monitor's local dimming of an external display (default: **M27P6S**) on macOS in one command.
 
@@ -11,6 +11,20 @@ It runs once and exits: no background app, no daemon.
 
 > [!WARNING]
 > **Use at your own risk.** This is an unofficial tool, not affiliated with or endorsed by the monitor's manufacturer or Apple. It uses private, undocumented macOS APIs (SkyLight, IOAVService) and writes a vendor-specific monitor setting (VCP 0xF4) that was found by trial, not taken from vendor documentation. It has been tested on one M27P6S on Apple Silicon only. Safety checks limit what it writes (see [Safety checks](#safety-checks)), but they can't rule out every firmware difference. A wrong setting can usually be undone with a factory reset from the monitor's own menu. The authors accept no liability for any damage, data loss or warranty issues. See [LICENSE](LICENSE).
+
+## Supported monitors
+
+- **Local dimming** is currently supported only on the **KTC M27P6S**. It uses a vendor-specific setting, and the tool checks the monitor's identity before writing it (see [Safety checks](#safety-checks)).
+- **HDR switching and color profile selection** use macOS settings, not monitor settings, so they work on any display macOS supports them on. HDR needs a display that macOS reports as HDR-capable.
+
+On other monitors, use the separate commands, since `on`, `off` and `toggle` include the M27P6S local dimming step and stop before changing anything if the monitor isn't an M27P6S:
+
+```sh
+hdrctl --display "<part of display name>" hdr on
+hdrctl --display "<part of display name>" profile "Rec. ITU-R BT.2020-1"
+```
+
+Run `hdrctl list` to see display names.
 
 ## Files
 

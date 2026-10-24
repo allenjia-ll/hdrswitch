@@ -31,6 +31,7 @@ Run `hdrctl list` to see display names.
 - `hdrctl.m`: source for the `hdrctl` command-line tool
 - `build.sh`: builds `hdrctl`
 - `m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
+- `CHANGELOG.md`: release history
 - `LICENSE`: MIT
 
 ## Build

@@ -30,18 +30,43 @@ Run `hdrctl list` to see display names.
 
 - `hdrctl.m`: source for the `hdrctl` command-line tool
 - `build.sh`: builds `hdrctl`
+- `release.sh`: builds and packages a binary release zip
 - `m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
 - `CHANGELOG.md`: release history
 - `LICENSE`: MIT
 
-## Build
+## Requirements
 
-Requires Xcode Command Line Tools (`xcode-select --install`).
+- Apple Silicon Mac (local dimming uses IOAVService, which isn't available on Intel Macs)
+- macOS 12 Monterey or later (tested on macOS 27 only)
+- Xcode Command Line Tools, only to build from source (`xcode-select --install`)
+
+## Install
+
+### Pre-built binary
+
+Download `hdrswitch-<version>-macos-arm64.zip` from [Releases](https://github.com/allenjia-ll/hdrswitch/releases) and unzip it. It contains `hdrctl`, `m27p6s-hdr.sh`, this README, the changelog and the license.
+
+The binary isn't notarized by Apple, so macOS blocks it the first time if the zip was downloaded in a browser. Remove the quarantine flag once, in the unzipped folder:
+
+```sh
+xattr -dr com.apple.quarantine .
+```
+
+### Build from source
 
 ```sh
 ./build.sh
 # optional: sudo cp hdrctl /usr/local/bin/
 ```
+
+### Make a release
+
+```sh
+./release.sh 0.1.2    # writes dist/hdrswitch-0.1.2-macos-arm64.zip and its SHA-256
+```
+
+The version must have a section in `CHANGELOG.md`. The script checks that the binary is arm64 and targets macOS 12.
 
 ## Usage
 

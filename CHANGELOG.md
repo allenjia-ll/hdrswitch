@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-23
+
+### Added
+
+- Pre-built binary release for macOS 12 or later on Apple Silicon (`hdrswitch-0.1.2-macos-arm64.zip`).
+- `release.sh` to build and package a release zip with a SHA-256 checksum.
+- Requirements and install sections in the README, including how to clear the Gatekeeper quarantine flag.
+
+### Changed
+
+- `build.sh` now targets macOS 12, so `hdrctl` runs on macOS 12 or later instead of only the macOS version it was built on.
+
 ## [0.1.1] - 2026-10-23
 
 ### Added
@@ -21,5 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/allenjia-ll/hdrswitch/releases/tag/v0.1.1

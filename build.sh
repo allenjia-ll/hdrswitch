@@ -8,7 +8,7 @@ if ! xcode-select -p >/dev/null 2>&1; then
   exit 1
 fi
 
-clang -fobjc-arc -O2 -Wall \
+clang -fobjc-arc -O2 -Wall -mmacosx-version-min=12.0 \
   -framework AppKit -framework ApplicationServices -framework IOKit \
   hdrctl.m -o hdrctl
 

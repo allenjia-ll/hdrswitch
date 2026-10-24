@@ -1,11 +1,13 @@
 # HDR Switch
 
-Toggle HDR, the color profile and the monitor's local dimming of an external display (default: **M27P6S**) on macOS in one command.
+Toggle HDR, the color profile and the monitor's local dimming of an external display (default: **M27P6S**) in one command, on macOS and Windows 10/11.
 
 | Command | HDR | Color profile | Local dimming |
 |---|---|---|---|
 | `on`  | on  | Rec. ITU-R BT.2020-1 | Standard |
 | `off` | off | Display P3 | Off |
+
+On Windows the color profile isn't changed yet; `on` and `off` do HDR and local dimming only.
 
 It runs once and exits: no background app, no daemon.
 
@@ -26,20 +28,47 @@ hdrctl --display "<part of display name>" profile "Rec. ITU-R BT.2020-1"
 
 Run `hdrctl list` to see display names.
 
+On Windows the same applies, except that there is no `profile` command yet, so only the HDR step is available for other monitors:
+
+```powershell
+hdrctl.exe --display "<part of display name>" hdr on
+```
+
 ## Files
+
+macOS:
 
 - `hdrctl.m`: source for the `hdrctl` command-line tool
 - `build.sh`: builds `hdrctl`
 - `release.sh`: builds and packages a binary release zip
 - `m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
+
+Windows:
+
+- `win/hdrctl.cpp`: source for the `hdrctl.exe` command-line tool
+- `win/build.ps1`: builds `win/hdrctl.exe`
+- `win/release.ps1`: builds and packages a binary release zip
+- `win/m27p6s-hdr.ps1`: wrapper that calls `hdrctl.exe` with the M27P6S defaults
+
+Both:
+
 - `CHANGELOG.md`: release history
 - `LICENSE`: MIT
 
 ## Requirements
 
+### macOS
+
 - Apple Silicon Mac (local dimming uses IOAVService, which isn't available on Intel Macs)
 - macOS 12 Monterey or later (tested on macOS 27 only)
 - Xcode Command Line Tools, only to build from source (`xcode-select --install`)
+
+### Windows
+
+- Windows 10 1709 or later, or Windows 11 (tested on Windows 11 25H2, build 26200, only)
+- A GPU driver that passes DDC/CI through, which is standard on AMD, Intel and NVIDIA desktop drivers
+- Visual Studio 2017 or later (or the standalone Build Tools) with the **Desktop development with C++** workload, only to build from source
+- No administrator rights needed, for either building or running
 
 ## Install
 
@@ -53,11 +82,40 @@ The binary isn't notarized by Apple, so macOS blocks it the first time if the zi
 xattr -dr com.apple.quarantine .
 ```
 
-### Build from source
+On Windows, download `hdrswitch-<version>-windows-x64.zip` and unzip it. It
+contains `hdrctl.exe`, `m27p6s-hdr.ps1`, this README, the changelog and the
+license. The exe links the C runtime statically, so no Visual C++
+redistributable is needed.
+
+The exe isn't code-signed, so SmartScreen may warn the first time it runs if
+the zip was downloaded in a browser. Either choose **More info > Run anyway**,
+or clear the mark-of-the-web first, in the unzipped folder:
+
+```powershell
+Get-ChildItem -Recurse | Unblock-File
+```
+
+### Build from source (macOS)
 
 ```sh
 ./build.sh
 # optional: sudo cp hdrctl /usr/local/bin/
+```
+
+### Build from source (Windows)
+
+```powershell
+.\win\build.ps1
+```
+
+`build.ps1` finds the MSVC toolset with `vswhere`, so it works from any shell;
+it doesn't have to be a Developer Command Prompt. Both Windows scripts resolve
+paths relative to themselves, so they can be run from any working directory;
+the build writes `win/hdrctl.exe` next to the source. To run the scripts in a
+fresh PowerShell install you may need to allow local scripts once:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
 ### Make a release
@@ -66,9 +124,22 @@ xattr -dr com.apple.quarantine .
 ./release.sh 0.1.2    # writes dist/hdrswitch-0.1.2-macos-arm64.zip and its SHA-256
 ```
 
-The version must have a section in `CHANGELOG.md`. The script checks that the binary is arm64 and targets macOS 12.
+On Windows:
+
+```powershell
+.\win\release.ps1 0.1.3   # writes dist/hdrswitch-0.1.3-windows-x64.zip and its SHA-256
+```
+
+Both scripts write to `dist/` in the repository root, and both require the
+version to have a section in `CHANGELOG.md`. The macOS script checks that the
+binary is arm64 and targets macOS 12. The Windows script reads the PE header
+and checks that the binary is x64, is a console app, does not require a
+Windows newer than 10.0, and links the C runtime statically so no
+redistributable is needed.
 
 ## Usage
+
+### macOS
 
 ```sh
 ./m27p6s-hdr.sh on        # HDR on  + BT.2020    + local dimming Standard
@@ -76,6 +147,44 @@ The version must have a section in `CHANGELOG.md`. The script checks that the bi
 ./m27p6s-hdr.sh toggle    # flip between on and off
 ./m27p6s-hdr.sh status    # show HDR state, current profile and local dimming (default)
 ```
+
+### Windows
+
+```powershell
+.\win\m27p6s-hdr.ps1 on       # HDR on  + local dimming Standard
+.\win\m27p6s-hdr.ps1 off      # HDR off + local dimming Off
+.\win\m27p6s-hdr.ps1 toggle   # flip between on and off
+.\win\m27p6s-hdr.ps1 status   # show HDR state and local dimming (default)
+```
+
+The Windows build takes the same subcommands as the macOS one, minus the
+color-profile ones (`profile`, `--hdr-profile`, `--sdr-profile`), which aren't
+implemented yet. The commands below are written as plain `hdrctl.exe`; from the
+repository root that is `.\win\hdrctl.exe`, or copy the exe somewhere on your
+`PATH`:
+
+```
+hdrctl.exe list                  list displays, EDID and HDR state
+hdrctl.exe status                HDR state + local dimming of the target display
+hdrctl.exe on                    HDR on  + local dimming Standard
+hdrctl.exe off                   HDR off + local dimming Off
+hdrctl.exe toggle                flip between on/off
+hdrctl.exe hdr on|off            HDR only
+hdrctl.exe ddc dump              read all monitor settings (DDC/CI VCP codes)
+hdrctl.exe ddc get <code>        read one VCP code, e.g. 0xF4
+hdrctl.exe ddc set 0xF4 0|2      local dimming Off|Standard (the only DDC write allowed)
+
+Options:
+  --display <text>       part of the display name        (default: M27P6S)
+  --legacy-hdr           use the Windows 10 advanced-color API, not the
+                         Windows 11 24H2+ one
+```
+
+To bind it to a hotkey, point a shortcut at
+`pwsh -WindowStyle Hidden -File C:\path\to\win\m27p6s-hdr.ps1 toggle` and set the
+shortcut key in its properties.
+
+### Both platforms
 
 Or call `hdrctl` directly:
 
@@ -115,6 +224,8 @@ SDR_PROFILE=~/Library/ColorSync/Profiles/M27P6S.icc ./m27p6s-hdr.sh off
 
 ## How it works
 
+### macOS
+
 - **HDR** is switched through SkyLight (`SLSDisplaySetHDRModeEnabled`), a private macOS framework (macOS 11+) loaded at runtime. A future macOS update could remove or change it.
 - **Color profile** is set with the public ColorSync API (`ColorSyncDeviceSetCustomProfiles`), the same setting as System Settings > Displays > Color profile. It applies to the current user.
 - **Local dimming** is a monitor setting, changed over DDC/CI with IOAVService (private IOKit API, Apple Silicon only). On the M27P6S it is vendor VCP code `0xF4`: `0` = Off, `2` = Standard. This was found by dumping all codes, changing local dimming in the monitor's menu, and diffing. Other models will likely use a different code.
@@ -122,9 +233,21 @@ SDR_PROFILE=~/Library/ColorSync/Profiles/M27P6S.icc ./m27p6s-hdr.sh off
 - Before any DDC write (`on`, `off`, `toggle`, `ddc set`), the tool checks that this is the same monitor and firmware 0xF4 was mapped on, and **stops without changing anything** if not (see [Safety checks](#safety-checks)).
 - The monitor silently drops DDC writes while busy (especially just after an HDR switch), so local dimming is written, read back, and retried for up to ~10 seconds.
 
+### Windows
+
+The structure is the same, but every API used is public and documented, so there is no equivalent of the macOS private-framework risk.
+
+- **HDR** is switched with `DisplayConfigSetDeviceInfo`. The tool prefers `DISPLAYCONFIG_DEVICE_INFO_SET_HDR_STATE` (Windows 11 24H2+), which controls HDR separately from wide colour gamut, and falls back to the older `SET_ADVANCED_COLOR_STATE` on Windows 10 and early Windows 11. This is the same setting as Settings > System > Display > Use HDR.
+- **Display identity** comes from one `DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME` call, which returns the EDID manufacturer ID, product code and friendly name. Note that Windows reports the manufacturer ID as the raw big-endian EDID bytes, so it is byte-swapped before being decoded into letters, while the product code is already in host order.
+- **Local dimming** uses the same vendor VCP code `0xF4` over DDC/CI, through the public monitor-configuration API in `dxva2.dll` (`SetVCPFeature` / `GetVCPFeatureAndVCPFeatureReply`). The DDC handle is resolved by matching the GDI device name (`\\.\DISPLAY1`) that both the display-config source and the `HMONITOR` report.
+- The DDC connection is opened and the monitor verified before HDR is switched, so a missing monitor or a failed check changes nothing. After switching HDR the tool waits ~1.5 s for the mode set to finish, then writes local dimming with the same read-back-and-retry loop.
+- Local dimming is read back and retried for up to ~10 seconds, as on macOS.
+- **One x64 binary covers Windows 10 and 11.** The newer HDR API is not a separate exported function, only a different integer passed to the same `DisplayConfigSetDeviceInfo`, so nothing fails to resolve at load time on Windows 10; the choice happens at runtime instead. `--legacy-hdr` forces the older API, which is how the Windows 10 path can be exercised on Windows 11. `status` prints which API answered.
+- DDC **reads** are retried too, for up to ~2 seconds per code. On a busy bus a read often gets no reply at all, which would otherwise make the safety checks fail when commands run back to back. A read that succeeds is never retried, so a value that comes back *wrong* still fails its check immediately rather than getting another chance at matching.
+
 ## Safety checks
 
-0xF4 is a vendor code, so on another model or firmware it may mean something else. Before writing it, the tool requires all of these to match the values recorded from this monitor (2026-10-23):
+0xF4 is a vendor code, so on another model or firmware it may mean something else. Before writing it, the tool requires all of these to match the values recorded from this monitor (2026-10-23). The same six checks apply on both platforms, and all six were confirmed to read identically on Windows:
 
 | Check | Expected |
 |---|---|
@@ -135,7 +258,7 @@ SDR_PROFILE=~/Library/ColorSync/Profiles/M27P6S.icc ./m27p6s-hdr.sh off
 | Firmware version (VCP 0xC9) | `0` |
 | Local dimming range max (VCP 0xF4) | `5` |
 
-If any check fails or can't be read, it prints a warning and exits with status 1 **before** switching HDR or the profile. The firmware can't be hashed over DDC/CI. VCP 0xC9 is the only version the monitor reports, and this vendor may leave it at 0, so a firmware update could go unnoticed. After updating the monitor's firmware, redo the mapping: `hdrctl ddc dump` with local dimming Off, change it to Standard in the monitor's menu, dump again, diff. Then update the values in `verifyMonitor` and the `kVCP...` constants in `hdrctl.m`.
+If any check fails or can't be read, it prints a warning and exits with status 1 **before** switching HDR or the profile. The firmware can't be hashed over DDC/CI. VCP 0xC9 is the only version the monitor reports, and this vendor may leave it at 0, so a firmware update could go unnoticed. After updating the monitor's firmware, redo the mapping: `hdrctl ddc dump` with local dimming Off, change it to Standard in the monitor's menu, dump again, diff. Then update the values in `verifyMonitor` and the `kVCP...` constants in `hdrctl.m` (macOS) and `win/hdrctl.cpp` (Windows).
 
 `ddc set` is limited to `0xF4` with `0` or `2`. Everything else is refused, because other codes can factory-reset the monitor, change input or power, or hit vendor service settings. `ddc get` and `ddc dump` only read and are safe.
 
@@ -147,7 +270,15 @@ Each change sends one 6-byte DDC "set" for VCP 0xF4 only, never a table of setti
 - **`warning: couldn't verify the monitor (DDC busy? ...)`**: a check got no reply. Nothing was changed; rerun, or quit MonitorControl.
 - **`warning: monitor doesn't match ...`**: a check returned a different value (other monitor, or new firmware). Nothing was changed. See [Safety checks](#safety-checks).
 - **`warning: couldn't confirm local dimming ...`**: the DDC bus is shared, and other DDC apps such as MonitorControl can garble replies. Quit them and rerun, or check the monitor's menu. `hdrctl ddc get 0xF4` shows the current value (it may need a couple of tries).
-- **Wrong profile applied**: check `env | grep _PROFILE` for overrides, and `which -a hdrctl` for an older copy on your PATH.
+- **Wrong profile applied** (macOS): check `env | grep _PROFILE` for overrides, and `which -a hdrctl` for an older copy on your PATH.
+
+Windows only:
+
+- **`couldn't open a DDC/CI connection`**: the display was found but the driver wouldn't open a monitor handle. Check that DDC/CI is enabled in the monitor's own menu, and prefer a direct cable; many USB-C hubs, KVMs and DisplayPort MST hubs don't pass DDC/CI through.
+- **`warning: couldn't confirm local dimming ...`**: another DDC app such as ClickMonitorDDC, Twinkle Tray or a vendor OSD utility is sharing the bus. Quit it and rerun.
+- **`warning: couldn't verify the monitor (DDC busy? ...)`**: reads are already retried for ~2 seconds per code, so if this still appears the bus is genuinely blocked. Nothing was changed. Quit other DDC apps and rerun.
+- **`warning: couldn't switch HDR on`**: Windows refused the mode set. Check that `hdrctl.exe list` reports the display as HDR-capable, and that HDR isn't blocked by a system policy (`hdrctl.exe status` prints *limited by system policy* when it is).
+- **`... cannot be loaded because running scripts is disabled`**: allow local scripts once with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
 ## License
 

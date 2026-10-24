@@ -1,3 +1,7 @@
 hdrctl
+hdrctl.exe
+*.obj
+*.pdb
+*.ilk
 .DS_Store
 dist/

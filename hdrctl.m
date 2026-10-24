@@ -10,7 +10,8 @@
 //   hdrctl hdr on|off                HDR only
 //   hdrctl profile <name|path>       color profile only
 //   hdrctl ddc dump|get <code>       read monitor settings (DDC/CI VCP codes)
-//   hdrctl ddc set 0xF4 0|2          local dimming Off|Standard (the only DDC write allowed)
+//   hdrctl ddc set <code> <value>    local dimming level listed in monitor_db.json (the only DDC write allowed)
+//   hdrctl identify                  print the monitor's identity and hash (for my_monitor / monitor_db.json)
 //
 // Options:
 //   --display <text>       part of the display name (default: M27P6S)
@@ -25,7 +26,11 @@
 
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
+#include <CommonCrypto/CommonDigest.h>
 #include <dlfcn.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 typedef int  (*SLSSetHDRFn)(CGDirectDisplayID display, bool enabled, int reserved1, int reserved2);
@@ -69,7 +74,8 @@ static void usage(int code) {
         "  profile <name|path>   change color profile only\n"
         "  ddc dump              read all monitor settings (DDC/CI VCP codes)\n"
         "  ddc get <code>        read one VCP code (e.g. 0xF4)\n"
-        "  ddc set 0xF4 0|2      local dimming Off|Standard (the only write allowed)\n"
+        "  ddc set <code> <value> local dimming level listed in monitor_db.json (the only write allowed)\n"
+        "  identify              print the monitor's identity and hash (for my_monitor / monitor_db.json)\n"
         "\n"
         "A profile <spec> is either a path to an .icc/.icm file or (part of) the\n"
         "profile's name as shown in System Settings > Displays > Color profile.\n");
@@ -301,56 +307,141 @@ static void ddcSet(IOAVServiceRef av, uint8_t code, uint16_t value) {
     ddcWrite(av, pkt, sizeof pkt);
 }
 
-// M27P6S local dimming: vendor VCP 0xF4, 0 = Off, 2 = Standard (found by diffing OSD changes).
-enum { kVCPLocalDimming = 0xF4, kDimmingOff = 0, kDimmingStandard = 2 };
+// -------------------------------------------------------------- monitor DB --
+// A monitor is identified by the SHA-256 of its identity values, in this order, as compact JSON:
+//   {"manufacturer":"SKG","product_id":10158,"product_name":"M27P6S",
+//    "display_controller_id":22021,"firmware_version":0,"local_dimming_range_max":5}
+// monitor_db.json (next to hdrctl) maps that hash to the identity and the monitor's DDC settings.
+// my_monitor (next to hdrctl) holds the hash of the monitor set up on this Mac. Before any DDC
+// write, the connected monitor is read, hashed, and must match my_monitor and be in the DB.
 
-// Before any DDC write, make sure this is the exact monitor (and firmware, as far as DDC can tell)
-// that 0xF4 was mapped on. Values recorded from the M27P6S on 2026-10-23. Exits if anything differs.
-static void verifyMonitor(IOAVServiceRef av, NSDictionary *attrs) {
-    NSMutableArray<NSString *> *bad = [NSMutableArray array];
-    BOOL unreadable = NO;   // a check got no reply (vs. a real mismatch)
-    if (![attrs[@"ManufacturerID"] isEqual:@"SKG"]) [bad addObject:[NSString stringWithFormat:@"EDID manufacturer is %@, expected SKG", attrs[@"ManufacturerID"]]];
-    if (![attrs[@"ProductID"] isEqual:@10158])     [bad addObject:[NSString stringWithFormat:@"EDID product ID is %@, expected 10158", attrs[@"ProductID"]]];
-    if (![attrs[@"ProductName"] isEqual:@"M27P6S"]) [bad addObject:[NSString stringWithFormat:@"EDID product name is %@, expected M27P6S", attrs[@"ProductName"]]];
+static NSString *pathNextToTool(NSString *name) {
+    char exe[PATH_MAX], real[PATH_MAX];
+    uint32_t size = sizeof exe;
+    if (_NSGetExecutablePath(exe, &size) != 0 || !realpath(exe, real)) die(@"can't find hdrctl's own path");
+    return [@(real).stringByDeletingLastPathComponent stringByAppendingPathComponent:name];
+}
 
-    struct { uint8_t code; BOOL checkMax; uint16_t want; const char *what; } checks[] = {
-        { 0xC8, NO,  22021, "display controller ID (VCP 0xC8)" },
-        { 0xC9, NO,  0,     "firmware version (VCP 0xC9)" },
-        { kVCPLocalDimming, YES, 5, "local dimming range max (VCP 0xF4)" },
+static NSString *jsonString(NSString *s) {
+    NSData *d = [NSJSONSerialization dataWithJSONObject:s
+                    options:NSJSONWritingFragmentsAllowed | NSJSONWritingWithoutEscapingSlashes error:NULL];
+    return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+}
+
+// The canonical identity JSON of the connected monitor, or nil with *why set if a value can't be read.
+static NSString *readIdentity(IOAVServiceRef av, NSDictionary *attrs, NSString **why) {
+    NSString *mfr = attrs[@"ManufacturerID"], *product = attrs[@"ProductName"];
+    NSNumber *pid = attrs[@"ProductID"];
+    if (![mfr isKindOfClass:NSString.class] || ![product isKindOfClass:NSString.class] ||
+        ![pid isKindOfClass:NSNumber.class]) { *why = @"EDID manufacturer, product ID or name not available"; return nil; }
+
+    struct { uint8_t code; BOOL useMax; const char *what; } vcp[] = {
+        { 0xC8, NO,  "display controller ID (VCP 0xC8)" },
+        { 0xC9, NO,  "firmware version (VCP 0xC9)" },
+        { 0xF4, YES, "local dimming range max (VCP 0xF4)" },
     };
-    for (size_t i = 0; i < sizeof checks / sizeof *checks; i++) {
+    unsigned got[3];
+    for (size_t i = 0; i < 3; i++) {
         uint16_t cur = 0, max = 0;
         BOOL ok = NO;
         for (int t = 0; t < 10 && !ok; t++) {   // bus is flaky and failures come in bursts
             if (t) usleep(300000);
-            ok = ddcGet(av, checks[i].code, &cur, &max);
+            ok = ddcGet(av, vcp[i].code, &cur, &max);
         }
-        uint16_t got = checks[i].checkMax ? max : cur;
-        if (!ok) { unreadable = YES; [bad addObject:[NSString stringWithFormat:@"%s: no reply", checks[i].what]]; }
-        else if (got != checks[i].want) [bad addObject:[NSString stringWithFormat:@"%s is %u, expected %u", checks[i].what, got, checks[i].want]];
+        if (!ok) { *why = [NSString stringWithFormat:@"%s: no reply (DDC busy? quit MonitorControl and retry)", vcp[i].what]; return nil; }
+        got[i] = vcp[i].useMax ? max : cur;
     }
-    if (bad.count == 0) return;
-    for (NSString *b in bad) fprintf(stderr, "warning: %s\n", b.UTF8String);
-    NSUInteger mismatches = [bad indexesOfObjectsPassingTest:^BOOL(NSString *b, NSUInteger i, BOOL *stop) {
-        return ![b hasSuffix:@": no reply"]; }].count;
-    if (unreadable && mismatches == 0)
-        fprintf(stderr, "warning: couldn't verify the monitor (DDC busy? quit MonitorControl and retry) "
-                        "— not changing anything\n");
-    else fprintf(stderr, "warning: monitor doesn't match the one local dimming (VCP 0xF4) was mapped on "
-                    "(different model or firmware?) — not changing anything\n");
+    return [NSString stringWithFormat:@"{\"manufacturer\":%@,\"product_id\":%lld,\"product_name\":%@,"
+                                       "\"display_controller_id\":%u,\"firmware_version\":%u,\"local_dimming_range_max\":%u}",
+            jsonString(mfr), pid.longLongValue, jsonString(product), got[0], got[1], got[2]];
+}
+
+static NSString *sha256Hex(NSString *s) {
+    NSData *d = [s dataUsingEncoding:NSUTF8StringEncoding];
+    unsigned char h[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(d.bytes, (CC_LONG)d.length, h);
+    NSMutableString *hex = [NSMutableString string];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [hex appendFormat:@"%02x", h[i]];
+    return hex;
+}
+
+static NSDictionary *loadDB(void) {
+    NSString *path = pathNextToTool(@"monitor_db.json");
+    NSData *d = [NSData dataWithContentsOfFile:path];
+    if (!d) return nil;
+    NSError *err = nil;
+    id db = [NSJSONSerialization JSONObjectWithData:d options:0 error:&err];
+    if (![db isKindOfClass:NSDictionary.class]) die(@"%@ isn't a valid JSON object: %@", path, err.localizedDescription ?: @"");
+    return db;
+}
+
+static NSString *readMyMonitor(void) {
+    NSString *s = [NSString stringWithContentsOfFile:pathNextToTool(@"my_monitor") encoding:NSUTF8StringEncoding error:NULL];
+    return [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+// The DB entry for the connected monitor, if it matches my_monitor and is in monitor_db.json.
+// Otherwise nil, with *why set.
+static NSDictionary *findMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString **why) {
+    NSString *identity = readIdentity(av, attrs, why);
+    if (!identity) return nil;
+    NSString *hash = sha256Hex(identity), *mine = readMyMonitor();
+    if (!mine.length) { *why = @"my_monitor not found next to hdrctl (see hdrctl identify)"; return nil; }
+    if (![hash isEqualToString:mine]) { *why = [NSString stringWithFormat:@"connected monitor is %@, my_monitor is %@", hash, mine]; return nil; }
+    NSDictionary *entry = loadDB()[hash];
+    if (![entry isKindOfClass:NSDictionary.class]) { *why = [NSString stringWithFormat:@"%@ isn't in monitor_db.json", hash]; return nil; }
+    return entry;
+}
+
+// Same as findMonitor, but prints "monitor unknown" and exits if there's no match. Call before any change.
+static NSDictionary *requireMonitor(IOAVServiceRef av, NSDictionary *attrs) {
+    NSString *why = nil;
+    NSDictionary *entry = findMonitor(av, attrs, &why);
+    if (entry) return entry;
+    fprintf(stderr, "monitor unknown: %s — not changing anything\n", why.UTF8String);
     exit(1);
 }
 
-static void setDimming(IOAVServiceRef av, uint16_t value) {
-    NSString *label = value == kDimmingStandard ? @"Standard" : value == kDimmingOff ? @"Off" : @(value).stringValue;
+// The local dimming VCP code from a DB entry, with its levels (name -> value) in *levels.
+static uint8_t localDimming(NSDictionary *entry, NSDictionary<NSString *, NSNumber *> **levels) {
+    NSDictionary *ld = entry[@"settings"][@"local_dimming"];
+    NSString *vcp = [ld isKindOfClass:NSDictionary.class] ? ld[@"vcp"] : nil;
+    NSArray *list = [ld isKindOfClass:NSDictionary.class] ? ld[@"levels"] : nil;
+    unsigned code = 0;
+    if (![vcp isKindOfClass:NSString.class] || ![[NSScanner scannerWithString:vcp] scanHexInt:&code] ||
+        code > 0xFF || ![list isKindOfClass:NSArray.class])
+        die(@"monitor_db.json: settings.local_dimming needs \"vcp\" (e.g. \"0xF4\") and \"levels\"");
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    for (NSDictionary *l in list) {
+        if (![l isKindOfClass:NSDictionary.class] || ![l[@"name"] isKindOfClass:NSString.class] ||
+            ![l[@"value"] isKindOfClass:NSNumber.class])
+            die(@"monitor_db.json: each local dimming level needs \"name\" and \"value\"");
+        out[[l[@"name"] lowercaseString]] = l[@"value"];
+    }
+    *levels = out;
+    return (uint8_t)code;
+}
+
+static uint16_t levelValue(NSDictionary<NSString *, NSNumber *> *levels, NSString *name) {
+    NSNumber *v = levels[name];
+    if (!v) die(@"monitor_db.json has no local dimming level \"%@\" for this monitor", name);
+    return v.unsignedShortValue;
+}
+
+static NSString *levelName(NSDictionary<NSString *, NSNumber *> *levels, uint16_t value) {
+    for (NSString *n in levels) if (levels[n].unsignedShortValue == value) return n;
+    return nil;
+}
+
+static void setDimming(IOAVServiceRef av, uint8_t code, uint16_t value, NSString *label) {
     uint16_t cur = 0xFFFF;
     // Skip the write (and the monitor's settings-memory wear) if it's already set; reads don't wear it.
-    if (ddcGet(av, kVCPLocalDimming, &cur, NULL) && cur == value) { say(@"Local dimming already %@", label); return; }
+    if (ddcGet(av, code, &cur, NULL) && cur == value) { say(@"Local dimming already %@", label); return; }
     // The monitor silently drops writes while busy (e.g. right after an HDR switch): write, verify, repeat.
     for (int i = 0; i < 10; i++) {
-        ddcSet(av, kVCPLocalDimming, value);
+        ddcSet(av, code, value);
         sleep(1);
-        if (ddcGet(av, kVCPLocalDimming, &cur, NULL) && cur == value) { say(@"Local dimming: %@", label); return; }
+        if (ddcGet(av, code, &cur, NULL) && cur == value) { say(@"Local dimming: %@", label); return; }
     }
     fprintf(stderr, "warning: couldn't confirm local dimming is %s (DDC busy? quit MonitorControl and retry)\n",
             label.UTF8String);
@@ -397,16 +488,33 @@ int main(int argc, const char *argv[]) {
                 if (!ddcGet(av, c, &cur, &max)) die(@"monitor didn't answer VCP 0x%02X", c);
                 say(@"0x%02X  %u  (max %u)", c, cur, max);
             } else if ([sub isEqualToString:@"set"] && args.count == 4) {
-                // Only the one write this tool is known to be safe for: local dimming Off or Standard.
+                // Only the local dimming levels monitor_db.json lists for this monitor can be written.
                 unsigned c = parseNum(args[2]), v = parseNum(args[3]);
-                if (c != kVCPLocalDimming || (v != kDimmingOff && v != kDimmingStandard)) {
-                    fprintf(stderr, "warning: only \"ddc set 0xF4 0\" (local dimming Off) and \"ddc set 0xF4 2\" "
-                                    "(Standard) are allowed — not changing anything\n");
+                NSDictionary<NSString *, NSNumber *> *levels = nil;
+                uint8_t code = localDimming(requireMonitor(av, attrs), &levels);
+                NSString *label = c == code ? levelName(levels, v) : nil;
+                if (!label) {
+                    NSMutableArray *ok = [NSMutableArray array];
+                    for (NSString *n in levels) [ok addObject:[NSString stringWithFormat:@"%@ = %@", n, levels[n]]];
+                    fprintf(stderr, "warning: only VCP 0x%02X with a listed level is allowed (%s) — not changing anything\n",
+                            code, [ok componentsJoinedByString:@", "].UTF8String);
                     return 1;
                 }
-                verifyMonitor(av, attrs);
-                setDimming(av, v);
+                setDimming(av, code, v, label);
             } else usage(1);
+            return 0;
+        }
+
+        if ([cmd isEqualToString:@"identify"]) {
+            NSDictionary *attrs = nil;
+            IOAVServiceRef av = findAVService(needle, &attrs);
+            NSString *why = nil, *identity = readIdentity(av, attrs, &why);
+            if (!identity) die(@"%@", why);
+            NSString *hash = sha256Hex(identity), *mine = readMyMonitor();
+            say(@"Identity:        %@", identity);
+            say(@"Hash:            %@", hash);
+            say(@"monitor_db.json: %@", loadDB()[hash] ? @"listed" : @"not listed");
+            say(@"my_monitor:      %@", !mine.length ? @"not found" : [mine isEqualToString:hash] ? @"matches" : @"different monitor");
             return 0;
         }
 
@@ -424,29 +532,39 @@ int main(int argc, const char *argv[]) {
 
         if ([cmd isEqualToString:@"status"]) {
             printStatus(d, name);
-            uint16_t cur = 0;   // read only, so no verifyMonitor; only 0 and 2 are known values
-            if (!ddcGet(findAVService(needle, NULL), kVCPLocalDimming, &cur, NULL))
-                say(@"  Local dimming: (no reply over DDC — try again)");
-            else say(@"  Local dimming: %@", cur == kDimmingOff ? @"Off" : cur == kDimmingStandard ? @"Standard"
-                                                : [NSString stringWithFormat:@"unknown (VCP 0xF4 = %u)", cur]);
+            NSDictionary *attrs = nil;
+            IOAVServiceRef av = findAVService(needle, &attrs);
+            NSString *why = nil;
+            NSDictionary *entry = findMonitor(av, attrs, &why);   // read only, so an unknown monitor isn't an error
+            NSDictionary<NSString *, NSNumber *> *levels = nil;
+            uint8_t code = entry ? localDimming(entry, &levels) : 0;
+            uint16_t cur = 0;
+            if (!entry) say(@"  Local dimming: monitor unknown (%@)", why);
+            else if (!ddcGet(av, code, &cur, NULL)) say(@"  Local dimming: (no reply over DDC — try again)");
+            else say(@"  Local dimming: %@", levelName(levels, cur)
+                                                ?: [NSString stringWithFormat:@"unknown (VCP 0x%02X = %u)", code, cur]);
         } else if ([cmd isEqualToString:@"on"] ||
                    ([cmd isEqualToString:@"toggle"] && !SLSIsHDR(d))) {
             NSURL *p = resolveProfile(hdrSpec);          // resolve and verify first, so we fail before switching
             NSDictionary *attrs = nil;
             IOAVServiceRef av = findAVService(needle, &attrs);
-            verifyMonitor(av, attrs);
+            NSDictionary<NSString *, NSNumber *> *levels = nil;
+            uint8_t code = localDimming(requireMonitor(av, attrs), &levels);
+            uint16_t level = levelValue(levels, @"standard");
             setHDR(d, YES);
             setProfile(d, p);
-            setDimming(av, kDimmingStandard);
+            setDimming(av, code, level, @"standard");
             say(@"Done: %@ — HDR on", name);
         } else if ([cmd isEqualToString:@"off"] || [cmd isEqualToString:@"toggle"]) {
             NSURL *p = resolveProfile(sdrSpec);
             NSDictionary *attrs = nil;
             IOAVServiceRef av = findAVService(needle, &attrs);
-            verifyMonitor(av, attrs);
+            NSDictionary<NSString *, NSNumber *> *levels = nil;
+            uint8_t code = localDimming(requireMonitor(av, attrs), &levels);
+            uint16_t level = levelValue(levels, @"off");
             setHDR(d, NO);
             setProfile(d, p);
-            setDimming(av, kDimmingOff);
+            setDimming(av, code, level, @"off");
             say(@"Done: %@ — HDR off", name);
         } else if ([cmd isEqualToString:@"hdr"] && args.count == 2) {
             NSString *v = args[1].lowercaseString;

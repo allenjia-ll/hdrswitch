@@ -5,3 +5,4 @@ hdrctl.exe
 *.ilk
 .DS_Store
 dist/
+my_monitor

@@ -1,0 +1,27 @@
+{
+  "5e482ea7b8352801d0f5e03a99b00a6d28c0f4324052af01cff9e6f5d3002008": {
+    "identity": {
+      "manufacturer": "SKG",
+      "product_id": 10158,
+      "product_name": "M27P6S",
+      "display_controller_id": 22021,
+      "firmware_version": 0,
+      "local_dimming_range_max": 5
+    },
+    "settings": {
+      "local_dimming": {
+        "vcp": "0xF4",
+        "levels": [
+          {
+            "name": "off",
+            "value": 0
+          },
+          {
+            "name": "standard",
+            "value": 2
+          }
+        ]
+      }
+    }
+  }
+}

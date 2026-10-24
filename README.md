@@ -42,6 +42,8 @@ macOS:
 - `build.sh`: builds `hdrctl`
 - `release.sh`: builds and packages a binary release zip
 - `m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
+- `monitor_db.json`: known monitors and their local dimming settings (see [Safety checks](#safety-checks))
+- `my_monitor`: the hash of your monitor, created by you, not in the repo (see [Set up your monitor](#set-up-your-monitor-macos))
 
 Windows:
 
@@ -74,7 +76,7 @@ Both:
 
 ### Pre-built binary
 
-Download `hdrswitch-<version>-macos-arm64.zip` from [Releases](https://github.com/allenjia-ll/hdrswitch/releases) and unzip it. It contains `hdrctl`, `m27p6s-hdr.sh`, this README, the changelog and the license.
+Download `hdrswitch-<version>-macos-arm64.zip` from [Releases](https://github.com/allenjia-ll/hdrswitch/releases) and unzip it. It contains `hdrctl`, `m27p6s-hdr.sh`, `monitor_db.json`, this README, the changelog and the license.
 
 The binary isn't notarized by Apple, so macOS blocks it the first time if the zip was downloaded in a browser. Remove the quarantine flag once, in the unzipped folder:
 
@@ -94,6 +96,18 @@ or clear the mark-of-the-web first, in the unzipped folder:
 ```powershell
 Get-ChildItem -Recurse | Unblock-File
 ```
+
+### Set up your monitor (macOS)
+
+Local dimming changes only work after you record your monitor's hash in `my_monitor`, next to `hdrctl`:
+
+```sh
+./hdrctl identify                                         # prints the identity and hash
+./hdrctl identify | awk '/^Hash:/ {print $2}' > my_monitor
+./hdrctl identify                                         # should now say "listed" and "matches"
+```
+
+If `hdrctl` is copied to another folder, copy `monitor_db.json` and `my_monitor` with it. A symlink to `hdrctl` works, since the files are looked up next to the real binary.
 
 ### Build from source (macOS)
 
@@ -198,7 +212,8 @@ hdrctl hdr on|off                HDR only
 hdrctl profile <name|path>       color profile only
 hdrctl ddc dump                  read all monitor settings (DDC/CI VCP codes)
 hdrctl ddc get <code>            read one VCP code, e.g. 0xF4
-hdrctl ddc set 0xF4 0|2          local dimming Off|Standard (the only DDC write allowed)
+hdrctl ddc set <code> <value>    local dimming level listed in monitor_db.json (the only DDC write allowed)
+hdrctl identify                  print the monitor's identity and hash (macOS)
 
 Options:
   --display <text>       part of the display name        (default: M27P6S)
@@ -230,7 +245,7 @@ SDR_PROFILE=~/Library/ColorSync/Profiles/M27P6S.icc ./m27p6s-hdr.sh off
 - **Color profile** is set with the public ColorSync API (`ColorSyncDeviceSetCustomProfiles`), the same setting as System Settings > Displays > Color profile. It applies to the current user.
 - **Local dimming** is a monitor setting, changed over DDC/CI with IOAVService (private IOKit API, Apple Silicon only). On the M27P6S it is vendor VCP code `0xF4`: `0` = Off, `2` = Standard. This was found by dumping all codes, changing local dimming in the monitor's menu, and diffing. Other models will likely use a different code.
 - The profile and DDC connection are resolved before HDR is switched, so a bad profile name or missing monitor fails without changing anything. After switching HDR, the tool waits for the display to settle, applies the profile, then sets local dimming.
-- Before any DDC write (`on`, `off`, `toggle`, `ddc set`), the tool checks that this is the same monitor and firmware 0xF4 was mapped on, and **stops without changing anything** if not (see [Safety checks](#safety-checks)).
+- Before any DDC write (`on`, `off`, `toggle`, `ddc set`), the tool reads the monitor's identity, hashes it, and looks it up in `my_monitor` and `monitor_db.json`. If it isn't found, it prints `monitor unknown` and **stops without changing anything** (see [Safety checks](#safety-checks)).
 - The monitor silently drops DDC writes while busy (especially just after an HDR switch), so local dimming is written, read back, and retried for up to ~10 seconds.
 
 ### Windows
@@ -247,28 +262,54 @@ The structure is the same, but every API used is public and documented, so there
 
 ## Safety checks
 
-0xF4 is a vendor code, so on another model or firmware it may mean something else. Before writing it, the tool requires all of these to match the values recorded from this monitor (2026-10-23). The same six checks apply on both platforms, and all six were confirmed to read identically on Windows:
+0xF4 is a vendor code, so on another model or firmware it may mean something else. Before writing it, the tool reads these six values from the connected monitor, in this order:
 
-| Check | Expected |
+| Identity field | M27P6S value (2026-10-23) |
 |---|---|
-| EDID manufacturer | `SKG` |
-| EDID product ID | `10158` |
-| EDID product name | `M27P6S` |
-| Display controller ID (VCP 0xC8) | `22021` |
-| Firmware version (VCP 0xC9) | `0` |
-| Local dimming range max (VCP 0xF4) | `5` |
+| `manufacturer` (EDID) | `SKG` |
+| `product_id` (EDID) | `10158` |
+| `product_name` (EDID) | `M27P6S` |
+| `display_controller_id` (VCP 0xC8) | `22021` |
+| `firmware_version` (VCP 0xC9) | `0` |
+| `local_dimming_range_max` (VCP 0xF4) | `5` |
 
-If any check fails or can't be read, it prints a warning and exits with status 1 **before** switching HDR or the profile. The firmware can't be hashed over DDC/CI. VCP 0xC9 is the only version the monitor reports, and this vendor may leave it at 0, so a firmware update could go unnoticed. After updating the monitor's firmware, redo the mapping: `hdrctl ddc dump` with local dimming Off, change it to Standard in the monitor's menu, dump again, diff. Then update the values in `verifyMonitor` and the `kVCP...` constants in `hdrctl.m` (macOS) and `win/hdrctl.cpp` (Windows).
+### macOS
 
-`ddc set` is limited to `0xF4` with `0` or `2`. Everything else is refused, because other codes can factory-reset the monitor, change input or power, or hit vendor service settings. `ddc get` and `ddc dump` only read and are safe.
+The values are written as compact JSON in that order and hashed with SHA-256:
+
+```
+{"manufacturer":"SKG","product_id":10158,"product_name":"M27P6S","display_controller_id":22021,"firmware_version":0,"local_dimming_range_max":5}
+```
+
+The hash must equal the one in `my_monitor` and be a key in `monitor_db.json`. That entry holds the identity and the monitor's settings:
+
+```json
+"settings": {
+  "local_dimming": {
+    "vcp": "0xF4",
+    "levels": [ { "name": "off", "value": 0 }, { "name": "standard", "value": 2 } ]
+  }
+}
+```
+
+`on` uses the `standard` level and `off` uses `off`. If any value can't be read, `my_monitor` is missing or different, or the hash isn't in the database, the tool prints `monitor unknown: <reason>` and exits with status 1 **before** switching HDR or the profile. `list`, `status`, `hdr`, `profile`, `identify`, `ddc get` and `ddc dump` don't write to the monitor and work on any display.
+
+`ddc set` accepts only the local dimming code and a level listed for the monitor. Everything else is refused, because other codes can factory-reset the monitor, change input or power, or hit vendor service settings.
+
+To add a monitor: map its local dimming code (`hdrctl ddc dump` with local dimming Off, change it in the monitor's menu, dump again, diff), run `hdrctl identify`, and add an entry under the printed hash. After a firmware update the hash may change and the tool will report `monitor unknown`; redo the mapping before adding the new hash. The firmware can't be hashed over DDC/CI. VCP 0xC9 is the only version the monitor reports, and this vendor may leave it at 0, so a firmware update could go unnoticed.
+
+### Windows
+
+The Windows build still compares the same six values against constants in `win/hdrctl.cpp` and allows only `ddc set 0xF4 0|2`. All six were confirmed to read identically on Windows.
 
 Each change sends one 6-byte DDC "set" for VCP 0xF4 only, never a table of settings. The monitor's firmware decides how it saves that. If local dimming is already at the target value the write is skipped, since reads don't wear the monitor's memory. If the read gets no reply, it writes anyway. A real change usually takes 1–2 writes, up to 10 when the monitor is busy. Switching a few times a day is fine, but don't run it in a tight loop.
 
 ## Troubleshooting
 
 - **`no connected display matches "M27P6S"`**: the monitor isn't connected to this Mac (or a KVM/switch has it on another input). Run `hdrctl list` to see display names.
-- **`warning: couldn't verify the monitor (DDC busy? ...)`**: a check got no reply. Nothing was changed; rerun, or quit MonitorControl.
-- **`warning: monitor doesn't match ...`**: a check returned a different value (other monitor, or new firmware). Nothing was changed. See [Safety checks](#safety-checks).
+- **`monitor unknown: ...`** (macOS): the reason follows. *no reply*: DDC was busy; rerun, or quit MonitorControl. *my_monitor not found*: see [Set up your monitor](#set-up-your-monitor-macos). *connected monitor is ..., my_monitor is ...* or *isn't in monitor_db.json*: a different monitor or new firmware. Nothing was changed. See [Safety checks](#safety-checks).
+- **`warning: couldn't verify the monitor ...`** / **`warning: monitor doesn't match ...`** (Windows): a check got no reply, or returned a different value. Nothing was changed.
+- **`hdrctl` hangs with no output**: the monitor is asleep and doesn't answer DDC reads. Wake it and rerun.
 - **`warning: couldn't confirm local dimming ...`**: the DDC bus is shared, and other DDC apps such as MonitorControl can garble replies. Quit them and rerun, or check the monitor's menu. `hdrctl ddc get 0xF4` shows the current value (it may need a couple of tries).
 - **Wrong profile applied** (macOS): check `env | grep _PROFILE` for overrides, and `which -a hdrctl` for an older copy on your PATH.
 

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-24
+
+### Added
+
+- `monitor_db.json`: known monitors, keyed by the SHA-256 of their identity (EDID manufacturer, product ID and name, VCP `0xC8`, `0xC9` and the `0xF4` range max), with each monitor's local dimming VCP code and levels.
+- `my_monitor`: the hash of the monitor set up on this Mac, created from `hdrctl identify`. It is per-user and not in the repo or the release zip.
+- `hdrctl identify`, which prints the connected monitor's identity, its hash, and whether it is in `monitor_db.json` and matches `my_monitor`.
+
+### Changed
+
+- macOS: before any DDC write, the connected monitor is read and hashed, and must match `my_monitor` and an entry in `monitor_db.json`. Otherwise `on`, `off`, `toggle` and `ddc set` print `monitor unknown` and stop before changing anything. This replaces the hard-coded checks; the M27P6S passes the same six values as before.
+- macOS: `on`, `off`, `toggle`, `ddc set` and `status` take the local dimming code and levels from `monitor_db.json`. `ddc set` accepts only a level listed for the monitor.
+- The release zip includes `monitor_db.json`.
+
+### Notes
+
+- Windows is unchanged and still uses its built-in checks. The 0.1.3 Windows zip is the latest Windows build.
+
 ## [0.1.3] - 2026-10-23
 
 ### Added
@@ -47,7 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/allenjia-ll/hdrswitch/releases/tag/v0.1.1

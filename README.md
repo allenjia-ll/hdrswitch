@@ -28,6 +28,16 @@ hdrctl --display "<part of display name>" profile "Rec. ITU-R BT.2020-1"
 
 Run `hdrctl list` to see display names.
 
+### Add your monitor (macOS)
+
+If your monitor has local dimming that you can change in its own menu, `hdrctl detect` can find out how to control it over DDC/CI:
+
+```sh
+hdrctl --display "<part of display name>" detect
+```
+
+It asks how many local dimming levels the monitor's menu has and what they're called, then asks you to set each one in the menu while it reads every VCP code (about a minute for the first level, less for the rest). The code that changes with local dimming, and only that code, is the one it uses. Until then it only reads. After you confirm, it writes each level back so you can check it on the monitor, then asks which levels `on` and `off` should use. The result is saved to `local_monitor_db.json` next to `hdrctl` (it overrides the shipped `monitor_db.json` entry for the same monitor), and it offers to open a pre-filled GitHub issue so the monitor can be added for everyone. `my_monitor.json` isn't changed. Quit MonitorControl and other DDC apps first, and keep the monitor awake.
+
 On Windows the same applies, except that there is no `profile` command yet, so only the HDR step is available for other monitors:
 
 ```powershell
@@ -57,6 +67,7 @@ Windows:
 Both:
 
 - `monitor_db.json`: known monitors and their local dimming settings (see [Safety checks](#safety-checks)). The build scripts copy it next to `mac/hdrctl` and `win/hdrctl.exe`; edit the one at the root.
+- `local_monitor_db.json`: monitors detected on this computer with `hdrctl detect` (macOS), next to `hdrctl`; not in the repo
 - `CHANGELOG.md`: release history
 - `LICENSE`: MIT
 
@@ -161,7 +172,7 @@ mac/app/build.sh                              # writes mac/app/build/HDR Switch.
 open "mac/app/build/HDR Switch.app"
 ```
 
-The app lives in the menu bar only (no Dock icon). Clicking its icon opens a panel with the monitor's name, a refresh button, an HDR toggle, and dropdowns for the color profile (the installed RGB display profiles; a pick applies right away) and local dimming (the levels in `monitor_db.json`); **HDR Switch Settings…** opens the settings window. Refresh re-reads everything over a new DDC connection. The toggle does the same as `hdrctl on` / `off`: HDR, then the color profile, then local dimming. In Settings, "When HDR is turned on" and "When HDR is turned off" each have **Set color profile to** and **Set local dimming to**, each a checkbox and a dropdown: checked, the toggle sets that value after switching; unchecked, it leaves it alone. The local dimming levels come from `monitor_db.json` for the monitor in `my_monitor.json`. The defaults are what `hdrctl` does: BT.2020 and Standard for on, Display P3 and Off for off. **Confirm** saves the settings (per user), **Cancel** discards the edits. If the monitor isn't supported (not in `monitor_db.json`, or not the one in `my_monitor.json`), its name gets an exclamation mark, and the toggle switches HDR and the color profile only, leaving local dimming alone. If the monitor doesn't answer over DDC within 3 seconds (e.g. it's asleep), the panel shows a warning and local dimming is unknown. The app ships `monitor_db.json` inside `HDR Switch.app` and keeps `my_monitor.json` in `~/Library/Application Support/HDR Switch/`, created on first use. To quit it: `pkill -x HDRSwitch`. It's Swift (SwiftUI inside an AppKit status item, so it runs on macOS 12) built with `swiftc`; no Xcode project is needed, and it uses the same `mac/core` as the CLI.
+The app lives in the menu bar only (no Dock icon). Clicking its icon opens a panel with the monitor's name, a refresh button, an HDR toggle, and dropdowns for the color profile (the installed RGB display profiles; a pick applies right away) and local dimming (the levels in `monitor_db.json`); **HDR Switch Settings…** opens the settings window. Refresh re-reads everything over a new DDC connection. The toggle does the same as `hdrctl on` / `off`: HDR, then the color profile, then local dimming. In Settings, "When HDR is turned on" and "When HDR is turned off" each have **Set color profile to** and **Set local dimming to**, each a checkbox and a dropdown: checked, the toggle sets that value after switching; unchecked, it leaves it alone. The local dimming levels come from `monitor_db.json` for the monitor in `my_monitor.json`. The defaults are what `hdrctl` does: BT.2020 and Standard for on, Display P3 and Off for off. **Confirm** saves the settings (per user), **Cancel** discards the edits. If the monitor isn't supported (not in `monitor_db.json`, or not the one in `my_monitor.json`), its name gets an exclamation mark, and the toggle switches HDR and the color profile only, leaving local dimming alone. If the monitor doesn't answer over DDC within 3 seconds (e.g. it's asleep), the panel shows a warning and local dimming is unknown. The app ships `monitor_db.json` inside `HDR Switch.app` and keeps `my_monitor.json` in `~/Library/Application Support/HDR Switch/`, created on first use. It also reads a `local_monitor_db.json` there (for example one from `hdrctl detect`, copied over), whose entries override the shipped ones. To quit it: `pkill -x HDRSwitch`. It's Swift (SwiftUI inside an AppKit status item, so it runs on macOS 12) built with `swiftc`; no Xcode project is needed, and it uses the same `mac/core` as the CLI.
 
 ### Build from source (Windows)
 
@@ -264,6 +275,7 @@ hdrctl ddc dump                  read all monitor settings (DDC/CI VCP codes)
 hdrctl ddc get <code>            read one VCP code, e.g. 0xF4
 hdrctl ddc set <code> <value>    local dimming level listed in monitor_db.json (the only DDC write allowed)
 hdrctl identify                  print the monitor's identity and hash
+hdrctl detect                    find the monitor's local dimming code and levels (macOS, interactive)
 
 Options:
   --display <text>       part of the display name        (default: M27P6S)

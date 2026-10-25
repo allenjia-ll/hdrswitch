@@ -431,8 +431,8 @@ NSString *HCSHA256Hex(NSString *s) {
     return hex;
 }
 
-NSDictionary *HCLoadDB(NSString **error) {
-    NSString *path = gDBPath ?: dataPath(@"monitor_db.json");
+// @{} if the file doesn't exist, nil with *error set if it isn't a JSON object.
+static NSDictionary *loadJSONObject(NSString *path, NSString **error) {
     NSData *d = path ? [NSData dataWithContentsOfFile:path] : nil;
     if (!d) return @{};
     NSError *err = nil;
@@ -440,6 +440,50 @@ NSDictionary *HCLoadDB(NSString **error) {
     if (![db isKindOfClass:NSDictionary.class])
         { fail(error, @"%@ isn't a valid JSON object: %@", path, err.localizedDescription ?: @""); return nil; }
     return db;
+}
+
+NSString *HCLocalDBPath(void) { return dataPath(@"local_monitor_db.json"); }
+
+NSDictionary *HCLoadLocalDB(NSString **error) { return loadJSONObject(HCLocalDBPath(), error); }
+
+NSDictionary *HCLoadDB(NSString **error) {
+    NSDictionary *shipped = loadJSONObject(gDBPath ?: dataPath(@"monitor_db.json"), error);
+    NSDictionary *local = shipped ? HCLoadLocalDB(error) : nil;
+    if (!local) return nil;
+    NSMutableDictionary *db = [shipped mutableCopy];
+    [db addEntriesFromDictionary:local];   // a detected monitor overrides the shipped entry
+    return db;
+}
+
+NSString *HCPrettyJSON(id object) {
+    NSData *d = [NSJSONSerialization dataWithJSONObject:object
+                    options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys | NSJSONWritingWithoutEscapingSlashes
+                      error:NULL];
+    return d ? [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] : nil;
+}
+
+NSDictionary *HCSaveLocalMonitor(NSDictionary *identity, uint8_t code, NSArray<NSDictionary *> *levels,
+                                 NSString *hdrOn, NSString *hdrOff, NSDictionary *report, NSString **error) {
+    NSString *canonical = HCIdentityJSON(identity), *path = HCLocalDBPath();
+    if (!canonical) { fail(error, @"incomplete identity"); return nil; }
+    if (!path) { fail(error, @"can't find hdrctl's own folder"); return nil; }
+    NSDictionary *existing = HCLoadLocalDB(error);
+    if (!existing) return nil;
+    NSDictionary *entry = @{
+        @"identity": identity,
+        @"settings": @{ @"local_dimming": @{ @"vcp": [NSString stringWithFormat:@"0x%02X", code], @"levels": levels,
+                                             @"hdr_on": hdrOn, @"hdr_off": hdrOff } },
+        @"report": report ?: @{},
+    };
+    NSMutableDictionary *db = [existing mutableCopy];
+    db[HCSHA256Hex(canonical)] = entry;
+    NSString *text = HCPrettyJSON(db);
+    NSError *err = nil;
+    if (!text || ![[text stringByAppendingString:@"\n"] writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err]) {
+        fail(error, @"couldn't write %@: %@", path, err.localizedDescription ?: @"not valid JSON");
+        return nil;
+    }
+    return entry;
 }
 
 NSString *HCMyMonitorPath(void) { return dataPath(@"my_monitor.json"); }
@@ -534,7 +578,10 @@ NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString **why, NSStr
     NSDictionary *db = HCLoadDB(error);
     if (!db) return nil;
     NSDictionary *entry = db[hash];
-    if (![entry isKindOfClass:NSDictionary.class]) { *why = [NSString stringWithFormat:@"%@ isn't in monitor_db.json", hash]; return nil; }
+    if (![entry isKindOfClass:NSDictionary.class]) {
+        *why = [NSString stringWithFormat:@"%@ isn't in monitor_db.json or local_monitor_db.json (to add it: hdrctl detect)", hash];
+        return nil;
+    }
     return entry;
 }
 
@@ -578,4 +625,39 @@ BOOL HCSetDimming(IOAVServiceRef av, uint8_t code, uint16_t value, NSString *lab
     }
     logWarn(@"couldn't confirm local dimming is %@ (DDC busy? quit MonitorControl and retry)", label);
     return NO;
+}
+
+// -------------------------------------------------------------- detection --
+
+NSDictionary<NSNumber *, NSArray<NSNumber *> *> *HCDDCScan(IOAVServiceRef av, NSArray<NSNumber *> *codes,
+                                                          void (^progress)(NSUInteger done, NSUInteger total)) {
+    if (!codes) {
+        NSMutableArray *all = [NSMutableArray array];
+        for (unsigned c = 0x01; c <= 0xFF; c++) [all addObject:@(c)];
+        codes = all;
+    }
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    for (NSUInteger i = 0; i < codes.count; i++) {
+        uint16_t cur = 0, max = 0;
+        if (HCDDCGet(av, codes[i].unsignedCharValue, &cur, &max)) out[codes[i]] = @[ @(cur), @(max) ];
+        if (progress) progress(i + 1, codes.count);
+    }
+    return out;
+}
+
+NSArray<NSNumber *> *HCDimmingCandidates(NSArray<NSDictionary *> *scans, NSDictionary *repeat) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSNumber *code in [[scans.firstObject allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+        // Must read the same twice with nothing changed, so codes that drift on their own are out.
+        if (![repeat[code] isEqual:scans.firstObject[code]]) continue;
+        NSMutableSet *values = [NSMutableSet set];
+        BOOL ok = YES;
+        for (NSDictionary *scan in scans) {
+            NSArray *v = scan[code];
+            if (!v || ![v[1] isEqual:scans.firstObject[code][1]]) { ok = NO; break; }   // answered, same range
+            [values addObject:v[0]];
+        }
+        if (ok && values.count == scans.count) [out addObject:code];   // a different value at every level
+    }
+    return out;
 }

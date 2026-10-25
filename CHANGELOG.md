@@ -13,10 +13,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Menu bar app: color profile and local dimming dropdowns (installed RGB display profiles; the levels in `monitor_db.json`), applied when picked, and a refresh button that re-reads everything.
 - Menu bar app settings window: for HDR on and for HDR off, **Set color profile to** and **Set local dimming to**, each a checkbox and a dropdown (installed RGB display profiles; the monitor's levels from `monitor_db.json`). The HDR toggle sets the chosen values after switching, or leaves them alone when unchecked. Defaults: BT.2020 and Standard for on, Display P3 and Off for off. **Confirm** saves, **Cancel** discards.
 - `HCSetDBPath`, `HCFindMonitorForIdentity` and `HCListProfiles` in `mac/core`, for the app.
+- Menu bar app: if the monitor doesn't answer over DDC within 3 seconds (e.g. it's asleep), the panel shows a warning and local dimming is unknown.
 
 ### Changed
 
-- macOS: every DDC call gives up after 3 seconds (tracked per DDC connection, so a call that never returns doesn't block a new connection), so a sleeping monitor no longer makes `hdrctl` (or the app) hang. The CLI prints `warning: the monitor didn't answer over DDC within 3 seconds (asleep?)` and fails as if the monitor gave no reply; the app shows a warning in its panel.
+- `monitor_db.json`: the KTC M27P6S entry now maps all 5 local dimming levels (off 0, auto 1, low 4, standard 2, high 3), found with `hdrctl detect`, and sets `hdr_on` / `hdr_off` to standard / off (the same as before). It also records how it was detected in a `report` section.
+
+## [0.1.8-mac] - 2026-10-25
+
+A macOS-only release. Windows is unchanged since 0.1.7-win and no new Windows binary ships here;
+`hdrctl detect` and `local_monitor_db.json` are macOS-only for now.
+
+### Added
+
+- macOS: `hdrctl detect` finds a monitor's local dimming VCP code and levels interactively. It asks how many levels the monitor's menu has and their names, scans every VCP code while the user sets each level, picks the code that changes with local dimming (asking if there's more than one), and only writes after the user confirms, setting each level back for them to check on the monitor. It also asks which levels `on` and `off` should use.
+- `local_monitor_db.json`: monitors found with `hdrctl detect`, saved next to `hdrctl` with an optional `report` section (firmware shown in the monitor's menu, connection, OS). The core reads it together with `monitor_db.json`, and its entries override the shipped ones. `my_monitor.json` isn't changed. `hdrctl detect` offers to open a pre-filled GitHub issue with the entry so it can be added to `monitor_db.json`.
+- `monitor_db.json` entries can set `settings.local_dimming.hdr_on` / `hdr_off`, the levels `on` and `off` use; without them, `on` and `off` use `standard` and `off` as before.
+
+### Changed
+
+- macOS: every DDC call gives up after 3 seconds (tracked per DDC connection), so a sleeping monitor no longer makes `hdrctl` hang. It prints `warning: the monitor didn't answer over DDC within 3 seconds (asleep?)` and fails as if the monitor gave no reply.
 
 ## [0.1.7-win] - 2026-10-25
 
@@ -114,7 +130,8 @@ unchanged since 0.1.6 and no new macOS binary ships here.
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.7-win...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.8-mac...HEAD
+[0.1.8-mac]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.7-win...v0.1.8-mac
 [0.1.7-win]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.6...v0.1.7-win
 [0.1.6]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.4...v0.1.6
 [0.1.4]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.3...v0.1.4

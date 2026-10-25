@@ -65,7 +65,9 @@ BOOL HCDDCGet(IOAVServiceRef av, uint8_t code, uint16_t *cur, uint16_t *max);
 // A monitor is identified by the SHA-256 of its identity values, in this order, as compact JSON:
 //   {"manufacturer":"SKG","product_id":10158,"product_name":"M27P6S",
 //    "display_controller_id":22021,"firmware_version":0,"local_dimming_range_max":5}
-// monitor_db.json maps that hash to the identity and the monitor's DDC settings. my_monitor.json
+// monitor_db.json maps that hash to the identity and the monitor's DDC settings; it ships with the
+// tool. local_monitor_db.json (next to it) has the same format and holds monitors detected on this
+// Mac (hdrctl detect); its entries override the shipped ones. my_monitor.json
 // holds the monitor set up on this Mac, as { "<hash>": { "identity": { ... } } }. Before any DDC
 // write, the connected monitor is read, hashed, and must match my_monitor.json and be in the DB.
 
@@ -74,8 +76,12 @@ NSDictionary *HCReadIdentityValues(IOAVServiceRef av, NSDictionary *attrs, NSStr
 // The canonical identity JSON that gets hashed, or nil if a value is missing or the wrong type.
 NSString *HCIdentityJSON(NSDictionary *identity);
 NSString *HCSHA256Hex(NSString *s);
-// The DB, @{} if monitor_db.json doesn't exist, or nil with *error set if it isn't valid JSON.
+// monitor_db.json merged with local_monitor_db.json (local entries win), @{} if neither exists, or
+// nil with *error set if one isn't valid JSON.
 NSDictionary *HCLoadDB(NSString **error);
+NSString *HCLocalDBPath(void);
+NSDictionary *HCLoadLocalDB(NSString **error);   // just local_monitor_db.json, @{} if it doesn't exist
+NSString *HCPrettyJSON(id object);                // indented, sorted keys
 NSString *HCMyMonitorPath(void);
 // The hash in my_monitor.json (with its identity in *identity), or nil with *why set if the file
 // is missing or invalid, including when its key isn't the hash of its identity section.
@@ -98,3 +104,20 @@ NSString *HCLevelName(NSDictionary<NSString *, NSNumber *> *levels, uint16_t val
 // Writes local dimming, reads it back and retries while the monitor is busy. Skips the write if
 // it's already set. Returns NO (with a warning logged) if it couldn't be confirmed.
 BOOL HCSetDimming(IOAVServiceRef av, uint8_t code, uint16_t value, NSString *label);
+
+// -------------------------------------------------------------- detection --
+// Finding a monitor's local dimming code: scan every VCP code at each level the user sets in the
+// monitor's menu, and look for the one code that changes with it. Scans only read.
+
+// Reads each code (all of 0x01–0xFF if codes is nil): code -> @[ cur, max ] for those that answered.
+NSDictionary<NSNumber *, NSArray<NSNumber *> *> *HCDDCScan(IOAVServiceRef av, NSArray<NSNumber *> *codes,
+                                                          void (^progress)(NSUInteger done, NSUInteger total));
+// Codes that are candidates for local dimming, sorted: scans[i] was taken at level i, repeat is a
+// second scan at level 0. A candidate reads the same in scans[0] and repeat, answers in every scan
+// with the same max, and has a different value at every level.
+NSArray<NSNumber *> *HCDimmingCandidates(NSArray<NSDictionary *> *scans, NSDictionary *repeat);
+// Adds (or replaces) this monitor's entry in local_monitor_db.json and returns it, or nil with *error
+// set. levels: @[ @{ @"name": "off", @"value": @0 }, ... ]. hdrOn / hdrOff: the level names hdrctl
+// on / off use (stored as settings.local_dimming.hdr_on / hdr_off). report: details for reviewers.
+NSDictionary *HCSaveLocalMonitor(NSDictionary *identity, uint8_t code, NSArray<NSDictionary *> *levels,
+                                 NSString *hdrOn, NSString *hdrOff, NSDictionary *report, NSString **error);

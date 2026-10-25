@@ -8,4 +8,6 @@ dist/
 my_monitor.json
 mac/monitor_db.json
 win/monitor_db.json
+local_monitor_db.json
 mac/app/build/
+.*.swp

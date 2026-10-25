@@ -106,6 +106,7 @@ struct HDRTile: View {
                     .foregroundColor(model.hdrOn ? .white : .primary)
                     .frame(width: 38, height: 38)
                     .background(Circle().fill(model.hdrOn ? Color.accentColor : Color.primary.opacity(0.14)))
+                    .background(HoverArea(enabled: model.canChange, tooltip: "Toggle HDR"))   // hand cursor and tooltip
                     .opacity(model.canChange ? 1 : 0.5)
             }
             .buttonStyle(.plain)
@@ -158,6 +159,108 @@ struct Dropdown: View {
     }
 }
 
+// Over its area: the pointing-hand cursor while enabled, and `tooltip` after the mouse rests there
+// for a second. A tracking area that's always active, because cursor rects, SwiftUI's hover and the
+// standard tooltip (.help) only work in the active app, and macOS doesn't always let a menu bar app
+// activate. The cursor is set on every mouse move, so other views resetting it don't win. Placed
+// behind a control, it doesn't take its clicks.
+struct HoverArea: NSViewRepresentable {
+    let enabled: Bool
+    var tooltip: String? = nil
+
+    final class AreaView: NSView {
+        var enabled = true
+        var tooltip: String?
+        private var inside = false
+        private var tooltipTimer: Timer?
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero,
+                                           options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited,
+                                                     .mouseMoved, .cursorUpdate],
+                                           owner: self))
+        }
+        override func mouseEntered(with event: NSEvent) {
+            inside = true
+            applyCursor()
+            tooltipTimer?.invalidate()
+            tooltipTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
+                guard let self = self, self.inside, let text = self.tooltip else { return }
+                Tooltip.shared.show(text, at: NSEvent.mouseLocation, over: self.window)
+            }
+        }
+        override func mouseMoved(with event: NSEvent) { applyCursor() }
+        override func cursorUpdate(with event: NSEvent) { applyCursor() }
+        override func mouseExited(with event: NSEvent) {
+            inside = false
+            NSCursor.arrow.set()
+            hideTooltip()
+        }
+        override func viewWillMove(toWindow newWindow: NSWindow?) { if newWindow == nil { hideTooltip() } }
+
+        // Only while the mouse is over the area, so model updates elsewhere don't touch the cursor.
+        func applyCursor() { if inside { (enabled ? NSCursor.pointingHand : NSCursor.arrow).set() } }
+
+        func hideTooltip() {
+            tooltipTimer?.invalidate()
+            tooltipTimer = nil
+            Tooltip.shared.hide()
+        }
+    }
+
+    func makeNSView(context: Context) -> AreaView { AreaView() }
+    func updateNSView(_ view: AreaView, context: Context) {
+        if view.enabled != enabled { view.hideTooltip() }   // e.g. a click started switching
+        view.enabled = enabled
+        view.tooltip = tooltip
+        view.applyCursor()
+    }
+}
+
+// A small tooltip window, attached to the popup so it goes away with it, and transparent to the mouse.
+final class Tooltip {
+    static let shared = Tooltip()
+    private var panel: NSPanel?
+
+    func show(_ text: String, at mouse: NSPoint, over parent: NSWindow?) {
+        let host = NSHostingView(rootView: Text(text)
+            .font(.system(size: 11))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(VisualEffect(material: .toolTip))
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5)))
+        let size = host.fittingSize
+        let p = panel ?? makePanel()
+        p.contentView = host
+        // Just below and right of the pointer, like the system tooltip.
+        p.setFrame(NSRect(x: mouse.x + 2, y: mouse.y - 24 - size.height, width: size.width, height: size.height), display: true)
+        if let parent = parent, p.parent !== parent { p.parent?.removeChildWindow(p); parent.addChildWindow(p, ordered: .above) }
+        p.orderFront(nil)
+        p.invalidateShadow()
+        panel = p
+    }
+
+    func hide() {
+        guard let p = panel else { return }
+        p.parent?.removeChildWindow(p)
+        p.orderOut(nil)
+    }
+
+    private func makePanel() -> NSPanel {
+        let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = true
+        p.ignoresMouseEvents = true
+        p.level = .popUpMenu
+        return p
+    }
+}
+
 // Hover flag for a row. A class rather than @State: with the Command Line Tools (no Xcode),
 // @State is a macro whose plugin isn't installed, so it doesn't compile.
 final class HoverState: ObservableObject {
@@ -186,11 +289,13 @@ struct MenuRow: View {
     }
 }
 
-// The translucent popup background.
+// The translucent popup (or tooltip) background.
 struct VisualEffect: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .popover
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let v = NSVisualEffectView()
-        v.material = .popover
+        v.material = material
         v.blendingMode = .behindWindow
         v.state = .active
         return v

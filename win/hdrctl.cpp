@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <errno.h>
 #include <string.h>
 #include <ctype.h>
 #include <wctype.h>
@@ -39,6 +40,11 @@ static const DWORD kHdrSettleMs        = 1500;    // let the mode set finish
 // Reads get no reply on a busy bus too, so they are retried as well.
 static const int   kVcpReadAttempts    = 8;
 static const DWORD kVcpReadRetryMs     = 250;     // 8 * 250 ms = ~2 s per code
+// The identity read races the mode set from an HDR switch, which can keep the
+// bus quiet for longer than an ordinary read has to wait. Give it a budget
+// nearer the write path's, so "status" straight after "on" reports the real
+// state instead of calling a merely busy monitor unknown.
+static const int   kIdentityReadAttempts = 20;    // 20 * 250 ms = ~5 s per code
 
 // ---------------------------------------------------------------------------
 // Display-config device-info types. 15 and 16 are Windows 11 24H2+; they are
@@ -137,6 +143,22 @@ static std::string decodeEdidMfg(UINT16 raw) {
     s[2] = (char)('A' + ((v >> 0)  & 0x1F) - 1);
     s[3] = '\0';
     return std::string(s);
+}
+
+// Strict numeric parse, matching parseNum in mac/hdrctl.m: the whole string
+// has to be a number. strtoul on its own is not enough, because it reports a
+// failed parse as 0 -- and 0 is a legitimate local dimming level, so a typo
+// like "ddc set 0xF4 banana" would silently switch local dimming off.
+static bool parseNum(const char* str, unsigned long* out) {
+    if (!str || !*str || *str == '-') return false;
+    // Hex only with an explicit 0x, so a leading zero stays decimal as on macOS.
+    int base = (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) ? 16 : 10;
+    char* end = NULL;
+    errno = 0;
+    unsigned long v = strtoul(str, &end, base);
+    if (errno == ERANGE || end == str || *end != '\0') return false;
+    *out = v;
+    return true;
 }
 
 static void warn(const char* fmt, ...) {
@@ -359,8 +381,9 @@ static bool vcpSet(HANDLE hMon, BYTE code, DWORD value) {
 // for a while after an HDR switch and when commands run back to back. Retry
 // those. A read that *succeeds* is never retried: a value that comes back wrong
 // has to fail its check immediately, not get a second chance at matching.
-static bool vcpGetRetry(HANDLE hMon, BYTE code, DWORD* cur, DWORD* max) {
-    for (int attempt = 0; attempt < kVcpReadAttempts; attempt++) {
+static bool vcpGetRetry(HANDLE hMon, BYTE code, DWORD* cur, DWORD* max,
+                        int attempts = kVcpReadAttempts) {
+    for (int attempt = 0; attempt < attempts; attempt++) {
         if (vcpGet(hMon, code, cur, max))
             return true;
         Sleep(kVcpReadRetryMs);
@@ -682,7 +705,7 @@ static bool readIdentity(HANDLE hMon, const DisplayTarget& t, Identity* out, std
     DWORD got[3];
     for (size_t i = 0; i < 3; i++) {
         DWORD cur = 0, max = 0;
-        if (!vcpGetRetry(hMon, vcp[i].code, &cur, &max)) {
+        if (!vcpGetRetry(hMon, vcp[i].code, &cur, &max, kIdentityReadAttempts)) {
             *why = std::string(vcp[i].what) + ": no reply (DDC busy? another DDC app running?)";
             return false;
         }
@@ -1087,8 +1110,11 @@ static int cmdDdc(const std::wstring& displayName, int argc, char** argv) {
             fprintf(stderr, "ddc get needs a VCP code, e.g. 0xF4\n");
             rc = 1;
         } else {
-            long code = strtol(argv[1], NULL, 0);
-            if (code < 0 || code > 0xFF) {
+            unsigned long code = 0;
+            if (!parseNum(argv[1], &code)) {
+                fprintf(stderr, "not a number: %s\n", argv[1]);
+                rc = 1;
+            } else if (code > 0xFF) {
                 fprintf(stderr, "VCP code out of range: %s\n", argv[1]);
                 rc = 1;
             } else {
@@ -1106,15 +1132,20 @@ static int cmdDdc(const std::wstring& displayName, int argc, char** argv) {
         // can be written: other codes can factory-reset the monitor, change
         // input or power, or hit vendor service settings.
         LocalDimming ld;
+        unsigned long code = 0, value = 0;
         if (argc < 3) {
             fprintf(stderr, "ddc set needs a code and a value, e.g. ddc set 0xF4 2\n");
+            rc = 1;
+        } else if (!parseNum(argv[1], &code)) {
+            fprintf(stderr, "not a number: %s\n", argv[1]);
+            rc = 1;
+        } else if (!parseNum(argv[2], &value)) {
+            fprintf(stderr, "not a number: %s\n", argv[2]);
             rc = 1;
         } else if (!requireMonitor(hMon, t, &ld)) {
             rc = 1;
         } else {
-            long code  = strtol(argv[1], NULL, 0);
-            long value = strtol(argv[2], NULL, 0);
-            const char* name = (code == (long)ld.code && value >= 0) ? ld.name((DWORD)value) : NULL;
+            const char* name = (code == ld.code) ? ld.name((DWORD)value) : NULL;
             if (!name) {
                 std::string ok;
                 for (size_t i = 0; i < ld.names.size(); i++)

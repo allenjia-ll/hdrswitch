@@ -17,7 +17,7 @@ typedef NS_ENUM(NSInteger, HCLogLevel) { HCLogInfo, HCLogWarning };
 void HCSetLogger(void (^logger)(HCLogLevel level, NSString *message));
 
 // -------------------------------------------------------------- data files --
-// monitor_db.json and my_monitor are read from this folder. Default: the folder of
+// monitor_db.json and my_monitor.json are read from this folder. Default: the folder of
 // the running executable (symlinks resolved).
 void HCSetDataDirectory(NSString *dir);
 NSString *HCDataDirectory(void);
@@ -56,17 +56,28 @@ BOOL HCDDCGet(IOAVServiceRef av, uint8_t code, uint16_t *cur, uint16_t *max);
 // A monitor is identified by the SHA-256 of its identity values, in this order, as compact JSON:
 //   {"manufacturer":"SKG","product_id":10158,"product_name":"M27P6S",
 //    "display_controller_id":22021,"firmware_version":0,"local_dimming_range_max":5}
-// monitor_db.json maps that hash to the identity and the monitor's DDC settings. my_monitor holds
-// the hash of the monitor set up on this Mac. Before any DDC write, the connected monitor is read,
-// hashed, and must match my_monitor and be in the DB.
+// monitor_db.json maps that hash to the identity and the monitor's DDC settings. my_monitor.json
+// holds the monitor set up on this Mac, as { "<hash>": { "identity": { ... } } }. Before any DDC
+// write, the connected monitor is read, hashed, and must match my_monitor.json and be in the DB.
 
-// The canonical identity JSON of the connected monitor, or nil with *why set if a value can't be read.
-NSString *HCReadIdentity(IOAVServiceRef av, NSDictionary *attrs, NSString **why);
+// The connected monitor's identity values (the keys above), or nil with *why set if one can't be read.
+NSDictionary *HCReadIdentityValues(IOAVServiceRef av, NSDictionary *attrs, NSString **why);
+// The canonical identity JSON that gets hashed, or nil if a value is missing or the wrong type.
+NSString *HCIdentityJSON(NSDictionary *identity);
 NSString *HCSHA256Hex(NSString *s);
 // The DB, @{} if monitor_db.json doesn't exist, or nil with *error set if it isn't valid JSON.
 NSDictionary *HCLoadDB(NSString **error);
-NSString *HCReadMyMonitor(void);   // trimmed contents of my_monitor, or nil
-// The DB entry for the connected monitor, if it matches my_monitor and is in monitor_db.json.
+NSString *HCMyMonitorPath(void);
+// The hash in my_monitor.json (with its identity in *identity), or nil with *why set if the file
+// is missing or invalid, including when its key isn't the hash of its identity section.
+NSString *HCReadMyMonitor(NSDictionary **identity, NSString **why);
+// Writes my_monitor.json for this identity and removes an old one-line my_monitor file.
+BOOL HCSaveMyMonitor(NSDictionary *identity, NSString **error);
+// If my_monitor.json doesn't exist, creates it for this identity (replacing an old one-line
+// my_monitor) and logs an info line.
+void HCEnsureMyMonitor(NSDictionary *identity);
+// The DB entry for the connected monitor, if it matches my_monitor.json and is in monitor_db.json.
+// Creates my_monitor.json first if it doesn't exist (see HCEnsureMyMonitor).
 // Otherwise nil, with *why set (monitor unknown) or *error set (monitor_db.json is invalid).
 NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString **why, NSString **error);
 // The local dimming VCP code from a DB entry, with its levels (name -> value) in *levels,

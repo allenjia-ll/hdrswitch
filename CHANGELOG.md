@@ -7,17 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-24
+
 ### Added
 
-- Windows: the same monitor lookup as macOS. Before any DDC write, `hdrctl.exe` reads the monitor's six identity values, hashes them with SHA-256 (BCrypt), and requires a match with `win/my_monitor` and an entry in `monitor_db.json`; otherwise `on`, `off`, `toggle` and `ddc set` print `monitor unknown` and stop. The local dimming code and levels come from the database, replacing the hard-coded checks. The hash is the same as on macOS.
+- `my_monitor.json` replaces the one-line `my_monitor` file on macOS and Windows. It holds one monitor, keyed by its hash, with an `identity` section. It's created from the connected monitor on first run (with an info line), and an old `my_monitor` is replaced automatically. A file whose key isn't the hash of its identity is rejected, and a mismatch names the fields that differ, e.g. `firmware_version is 1, my_monitor.json has 0`.
+- `hdrctl identify --save` rewrites `my_monitor.json` for the connected monitor.
+- Windows: the same monitor lookup as macOS. Before any DDC write, `hdrctl.exe` reads the monitor's six identity values, hashes them with SHA-256 (BCrypt), and requires a match with `win/my_monitor.json` and an entry in `monitor_db.json`; otherwise `on`, `off`, `toggle` and `ddc set` print `monitor unknown` and stop. The local dimming code and levels come from the database, replacing the hard-coded checks. The hash is the same as on macOS.
 - Windows: `hdrctl.exe identify`, and a small JSON parser for `monitor_db.json` (no new dependencies).
 
 ### Changed
 
 - macOS: the HDR, color profile, DDC/CI and monitor DB code moved from `mac/hdrctl.m` into `mac/core/hdrcore.m`, which returns errors instead of exiting, so a menu bar app can share it. The CLI's output and exit codes are unchanged, except that a DDC write that fails three times in a row no longer exits: during a read it counts as no reply, and during a set the read-back loop retries it.
 - `monitor_db.json` moved to the repo root and is shared by both builds. `mac/build.sh` and `win/build.ps1` copy it next to the binary (the copies are gitignored), and both release scripts include it in the zip.
-- The macOS files moved to `mac/`: `mac/hdrctl.m`, `mac/build.sh`, `mac/release.sh`, `mac/m27p6s-hdr.sh` and `mac/monitor_db.json`. The build writes `mac/hdrctl`, and `my_monitor` goes in `mac/`. The release zip layout is unchanged.
-- The README and `build.sh` suggest a symlink instead of copying `hdrctl` to `/usr/local/bin`, since a copy can't find `monitor_db.json` and `my_monitor`.
+- The macOS files moved to `mac/`: `mac/hdrctl.m`, `mac/build.sh`, `mac/release.sh`, `mac/m27p6s-hdr.sh` and `mac/monitor_db.json`. The build writes `mac/hdrctl`, and `my_monitor.json` goes in `mac/`. The release zip layout is unchanged.
+- The README and `build.sh` suggest a symlink instead of copying `hdrctl` to `/usr/local/bin`, since a copy can't find `monitor_db.json` and `my_monitor.json`.
+
+### Notes
+
+- This release ships the macOS binary only. The Windows changes above are in the source but haven't been built or tested on Windows yet; the 0.1.3 Windows zip is still the latest Windows build.
 
 ## [0.1.4] - 2026-10-24
 
@@ -77,7 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.4...v0.1.6
 [0.1.4]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.1...v0.1.2

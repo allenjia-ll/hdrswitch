@@ -376,9 +376,10 @@ static bool vcpGetRetry(HANDLE hMon, BYTE code, DWORD* cur, DWORD* max) {
 //   {"manufacturer":"SKG","product_id":10158,"product_name":"M27P6S",
 //    "display_controller_id":22021,"firmware_version":0,"local_dimming_range_max":5}
 // monitor_db.json (next to hdrctl.exe) maps that hash to the identity and the
-// monitor's DDC settings. my_monitor (next to hdrctl.exe) holds the hash of
-// the monitor set up on this PC. Before any DDC write, the connected monitor
-// is read, hashed, and must match my_monitor and be in the DB.
+// monitor's DDC settings. my_monitor.json (next to hdrctl.exe) holds the
+// monitor set up on this PC, as { "<hash>": { "identity": { ... } } }. Before
+// any DDC write, the connected monitor is read, hashed, and must match
+// my_monitor.json and be in the DB.
 // ---------------------------------------------------------------------------
 
 // Just enough JSON for monitor_db.json: objects, arrays, strings, numbers,
@@ -635,16 +636,6 @@ static bool readFile(const std::wstring& path, std::string* out) {
     return true;
 }
 
-static std::string readMyMonitor() {
-    std::string s;
-    if (!readFile(pathNextToTool(L"my_monitor"), &s)) return std::string();
-    if (s.compare(0, 3, "\xEF\xBB\xBF") == 0) s.erase(0, 3);   // UTF-8 BOM, e.g. from Notepad
-    size_t a = s.find_first_not_of(" \t\r\n");
-    if (a == std::string::npos) return std::string();
-    size_t b = s.find_last_not_of(" \t\r\n");
-    return s.substr(a, b - a + 1);
-}
-
 // Loads monitor_db.json. Returns false with *why set if it's missing or invalid.
 static bool loadDB(JsonValue* db, std::string* why) {
     std::string text;
@@ -660,9 +651,29 @@ static bool loadDB(JsonValue* db, std::string* why) {
     return true;
 }
 
-// The canonical identity JSON of the connected monitor. Returns false with
-// *why set if a value can't be read.
-static bool readIdentity(HANDLE hMon, const DisplayTarget& t, std::string* identity, std::string* why) {
+// The six identity values, in hash order.
+struct Identity {
+    std::string manufacturer;
+    long long productId = 0;
+    std::string productName;
+    long long controllerId = 0;
+    long long firmware = 0;
+    long long dimmingMax = 0;
+};
+
+// The canonical identity JSON that gets hashed (same text as the macOS build).
+static std::string identityJson(const Identity& id) {
+    char nums[200];
+    snprintf(nums, sizeof(nums),
+             ",\"display_controller_id\":%lld,\"firmware_version\":%lld,\"local_dimming_range_max\":%lld}",
+             id.controllerId, id.firmware, id.dimmingMax);
+    return "{\"manufacturer\":" + jsonQuote(id.manufacturer) +
+           ",\"product_id\":" + std::to_string(id.productId) +
+           ",\"product_name\":" + jsonQuote(id.productName) + nums;
+}
+
+// The connected monitor's identity. Returns false with *why set if a value can't be read.
+static bool readIdentity(HANDLE hMon, const DisplayTarget& t, Identity* out, std::string* why) {
     struct { BYTE code; bool useMax; const char* what; } vcp[] = {
         { kVcpControllerId,     false, "display controller ID (VCP 0xC8)" },
         { kVcpFirmwareVersion,  false, "firmware version (VCP 0xC9)" },
@@ -677,14 +688,136 @@ static bool readIdentity(HANDLE hMon, const DisplayTarget& t, std::string* ident
         }
         got[i] = vcp[i].useMax ? max : cur;
     }
-    char nums[160];
-    snprintf(nums, sizeof(nums),
-             ",\"display_controller_id\":%lu,\"firmware_version\":%lu,\"local_dimming_range_max\":%lu}",
-             got[0], got[1], got[2]);
-    *identity = "{\"manufacturer\":" + jsonQuote(decodeEdidMfg(t.edidMfgRaw)) +
-                ",\"product_id\":" + std::to_string(t.edidProductCode) +
-                ",\"product_name\":" + jsonQuote(narrow(t.friendlyName)) + nums;
+    out->manufacturer = decodeEdidMfg(t.edidMfgRaw);
+    out->productId    = t.edidProductCode;
+    out->productName  = narrow(t.friendlyName);
+    out->controllerId = got[0];
+    out->firmware     = got[1];
+    out->dimmingMax   = got[2];
     return true;
+}
+
+// An identity section from my_monitor.json. Returns false if a value is missing or the wrong type.
+static bool identityFromJson(const JsonValue& v, Identity* out) {
+    const JsonValue* mfr  = v.get("manufacturer");
+    const JsonValue* pid  = v.get("product_id");
+    const JsonValue* name = v.get("product_name");
+    const JsonValue* ctl  = v.get("display_controller_id");
+    const JsonValue* fw   = v.get("firmware_version");
+    const JsonValue* ld   = v.get("local_dimming_range_max");
+    if (!mfr || mfr->type != JsonValue::String || !name || name->type != JsonValue::String ||
+        !pid || pid->type != JsonValue::Number || !ctl || ctl->type != JsonValue::Number ||
+        !fw || fw->type != JsonValue::Number || !ld || ld->type != JsonValue::Number)
+        return false;
+    out->manufacturer = mfr->str;
+    out->productId    = (long long)pid->num;
+    out->productName  = name->str;
+    out->controllerId = (long long)ctl->num;
+    out->firmware     = (long long)fw->num;
+    out->dimmingMax   = (long long)ld->num;
+    return true;
+}
+
+// "firmware_version is 1, my_monitor.json has 0" for each field that differs.
+static std::string identityDiff(const Identity& live, const Identity& mine) {
+    std::string out;
+    auto add = [&out](const char* key, const std::string& a, const std::string& b) {
+        if (a == b) return;
+        if (!out.empty()) out += "; ";
+        out += std::string(key) + " is " + a + ", my_monitor.json has " + b;
+    };
+    add("manufacturer", live.manufacturer, mine.manufacturer);
+    add("product_id", std::to_string(live.productId), std::to_string(mine.productId));
+    add("product_name", live.productName, mine.productName);
+    add("display_controller_id", std::to_string(live.controllerId), std::to_string(mine.controllerId));
+    add("firmware_version", std::to_string(live.firmware), std::to_string(mine.firmware));
+    add("local_dimming_range_max", std::to_string(live.dimmingMax), std::to_string(mine.dimmingMax));
+    return out;
+}
+
+static void stripBom(std::string* s) {
+    if (s->compare(0, 3, "\xEF\xBB\xBF") == 0) s->erase(0, 3);   // UTF-8 BOM, e.g. from Notepad
+}
+
+// The hash in my_monitor.json, with its identity in *identity. Returns false with *why set if the
+// file is missing or invalid, including when its key isn't the hash of its identity section.
+static bool readMyMonitor(std::string* hash, Identity* identity, std::string* why) {
+    std::string text, err;
+    if (!readFile(pathNextToTool(L"my_monitor.json"), &text)) {
+        *why = "my_monitor.json not found (run: hdrctl identify --save)";
+        return false;
+    }
+    stripBom(&text);
+    JsonValue json;
+    if (!JsonParser(text).parse(&json, &err) || json.type != JsonValue::Object || json.keys.size() != 1) {
+        *why = "my_monitor.json isn't valid: it must be a JSON object with one monitor (run: hdrctl identify --save)";
+        return false;
+    }
+    const JsonValue* ident = json.items[0].get("identity");
+    Identity id;
+    if (!ident || !identityFromJson(*ident, &id)) {
+        *why = "my_monitor.json isn't valid: its identity section is missing or incomplete (run: hdrctl identify --save)";
+        return false;
+    }
+    std::string computed;
+    if (!sha256Hex(identityJson(id), &computed) || computed != json.keys[0]) {
+        *why = "my_monitor.json isn't valid: its key doesn't match its identity section (run: hdrctl identify --save)";
+        return false;
+    }
+    *hash = json.keys[0];
+    if (identity) *identity = id;
+    return true;
+}
+
+// Writes my_monitor.json for this identity and removes an old one-line my_monitor file.
+static bool saveMyMonitor(const Identity& id, std::string* err) {
+    std::string hash;
+    if (!sha256Hex(identityJson(id), &hash)) { *err = "couldn't compute SHA-256"; return false; }
+    std::string text =
+        "{\n  \"" + hash + "\": {\n    \"identity\": {\n"
+        "      \"manufacturer\": " + jsonQuote(id.manufacturer) + ",\n"
+        "      \"product_id\": " + std::to_string(id.productId) + ",\n"
+        "      \"product_name\": " + jsonQuote(id.productName) + ",\n"
+        "      \"display_controller_id\": " + std::to_string(id.controllerId) + ",\n"
+        "      \"firmware_version\": " + std::to_string(id.firmware) + ",\n"
+        "      \"local_dimming_range_max\": " + std::to_string(id.dimmingMax) + "\n"
+        "    }\n  }\n}\n";
+    FILE* f = NULL;
+    if (_wfopen_s(&f, pathNextToTool(L"my_monitor.json").c_str(), L"wb") != 0 || !f) {
+        *err = "can't open the file for writing";
+        return false;
+    }
+    bool ok = fwrite(text.data(), 1, text.size(), f) == text.size();
+    ok = (fclose(f) == 0) && ok;
+    if (!ok) { *err = "write failed"; return false; }
+    DeleteFileW(pathNextToTool(L"my_monitor").c_str());   // old one-line format
+    return true;
+}
+
+// If my_monitor.json doesn't exist, creates it for this identity (replacing an old one-line
+// my_monitor) and prints an info line.
+static void ensureMyMonitor(const Identity& id) {
+    std::wstring path = pathNextToTool(L"my_monitor.json");
+    if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return;
+    std::wstring oldPath = pathNextToTool(L"my_monitor");
+    std::string oldHash;
+    bool hadOld = readFile(oldPath, &oldHash);
+    if (hadOld) {
+        stripBom(&oldHash);
+        size_t a = oldHash.find_first_not_of(" \t\r\n"), b = oldHash.find_last_not_of(" \t\r\n");
+        oldHash = a == std::string::npos ? std::string() : oldHash.substr(a, b - a + 1);
+    }
+    std::string err, hash;
+    if (!saveMyMonitor(id, &err)) {
+        warn("couldn't create %s: %s", narrow(path).c_str(), err.c_str());
+        return;
+    }
+    sha256Hex(identityJson(id), &hash);
+    if (hadOld)
+        printf("Replaced %s with my_monitor.json for %s%s\n", narrow(oldPath).c_str(), id.productName.c_str(),
+               oldHash == hash ? "" : (" (the old file was for a different monitor, " + oldHash + ")").c_str());
+    else
+        printf("Created %s for %s (%s)\n", narrow(path).c_str(), id.productName.c_str(), hash.c_str());
 }
 
 struct LocalDimming {
@@ -734,14 +867,21 @@ static bool parseLocalDimming(const JsonValue& entry, LocalDimming* out, std::st
 }
 
 // The local dimming settings for the connected monitor, if it matches
-// my_monitor and is in monitor_db.json. Otherwise false, with *why set.
+// my_monitor.json and is in monitor_db.json. Otherwise false, with *why set.
+// Creates my_monitor.json first if it doesn't exist (see ensureMyMonitor).
 static bool findMonitor(HANDLE hMon, const DisplayTarget& t, LocalDimming* out, std::string* why) {
-    std::string identity, hash;
-    if (!readIdentity(hMon, t, &identity, why)) return false;
-    if (!sha256Hex(identity, &hash)) { *why = "couldn't compute SHA-256"; return false; }
-    std::string mine = readMyMonitor();
-    if (mine.empty()) { *why = "my_monitor not found next to hdrctl.exe (see hdrctl identify)"; return false; }
-    if (hash != mine) { *why = "connected monitor is " + hash + ", my_monitor is " + mine; return false; }
+    Identity live, mine;
+    std::string hash, mineHash;
+    if (!readIdentity(hMon, t, &live, why)) return false;
+    if (!sha256Hex(identityJson(live), &hash)) { *why = "couldn't compute SHA-256"; return false; }
+    ensureMyMonitor(live);
+    if (!readMyMonitor(&mineHash, &mine, why)) return false;
+    if (hash != mineHash) {
+        std::string diff = identityDiff(live, mine);
+        *why = "connected monitor doesn't match my_monitor.json: " + (diff.empty() ? hash : diff) +
+               " (if this is your monitor, run: hdrctl identify --save)";
+        return false;
+    }
     JsonValue db;
     if (!loadDB(&db, why)) return false;
     const JsonValue* entry = db.get(hash.c_str());
@@ -997,31 +1137,44 @@ static int cmdDdc(const std::wstring& displayName, int argc, char** argv) {
     return rc;
 }
 
-static int cmdIdentify(const std::wstring& displayName) {
+static int cmdIdentify(const std::wstring& displayName, bool save) {
     DisplayTarget t;
     if (!findTarget(displayName, &t)) return 1;
     HANDLE hMon = NULL;
     if (!openPhysicalMonitor(t, &hMon)) return 1;
+    Identity live;
     std::string identity, hash, why;
-    bool ok = readIdentity(hMon, t, &identity, &why);
+    bool ok = readIdentity(hMon, t, &live, &why);
     DestroyPhysicalMonitor(hMon);
     if (!ok) {
         fprintf(stderr, "error: %s\n", why.c_str());
         return 1;
     }
+    identity = identityJson(live);
     if (!sha256Hex(identity, &hash)) {
         fprintf(stderr, "error: couldn't compute SHA-256\n");
         return 1;
     }
+    if (save) {
+        std::string err;
+        if (!saveMyMonitor(live, &err)) {
+            fprintf(stderr, "error: couldn't write %s: %s\n", narrow(pathNextToTool(L"my_monitor.json")).c_str(), err.c_str());
+            return 1;
+        }
+        printf("Saved %s\n", narrow(pathNextToTool(L"my_monitor.json")).c_str());
+    } else {
+        ensureMyMonitor(live);
+    }
+    std::string mine, mineWhy;
+    bool haveMine = readMyMonitor(&mine, NULL, &mineWhy);
     JsonValue db;
     std::string dbWhy;
     const char* listed = !loadDB(&db, &dbWhy) ? "not listed"
                        : db.get(hash.c_str()) ? "listed" : "not listed";
-    std::string mine = readMyMonitor();
     printf("Identity:        %s\n", identity.c_str());
     printf("Hash:            %s\n", hash.c_str());
     printf("monitor_db.json: %s%s%s\n", listed, dbWhy.empty() ? "" : " (", dbWhy.empty() ? "" : (dbWhy + ")").c_str());
-    printf("my_monitor:      %s\n", mine.empty() ? "not found" : mine == hash ? "matches" : "different monitor");
+    printf("my_monitor.json: %s\n", !haveMine ? mineWhy.c_str() : mine == hash ? "matches" : "different monitor");
     return 0;
 }
 
@@ -1038,7 +1191,7 @@ static void usage() {
 "  hdrctl ddc dump                  read all monitor settings (DDC/CI VCP codes)\n"
 "  hdrctl ddc get <code>            read one VCP code, e.g. 0xF4\n"
 "  hdrctl ddc set <code> <value>    local dimming level listed in monitor_db.json (the only DDC write allowed)\n"
-"  hdrctl identify                  print the monitor's identity and hash (for my_monitor / monitor_db.json)\n"
+"  hdrctl identify [--save]         print the monitor's identity and hash; --save rewrites my_monitor.json\n"
 "\n"
 "Options:\n"
 "  --display <text>       part of the display name        (default: %s)\n"
@@ -1081,7 +1234,7 @@ int main(int argc, char** argv) {
     if (cmd == "on")     return applyState(displayName, true);
     if (cmd == "off")    return applyState(displayName, false);
     if (cmd == "toggle") return cmdToggle(displayName);
-    if (cmd == "identify") return cmdIdentify(displayName);
+    if (cmd == "identify") return cmdIdentify(displayName, rest.size() > 1 && std::string(rest[1]) == "--save");
     if (cmd == "hdr") {
         if (rest.size() < 2) {
             fprintf(stderr, "hdr needs on or off\n");

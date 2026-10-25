@@ -287,7 +287,13 @@ static NSString *jsonString(NSString *s) {
     return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
 }
 
-NSString *HCReadIdentity(IOAVServiceRef av, NSDictionary *attrs, NSString **why) {
+// Identity fields, in hash order.
+static NSArray<NSString *> *identityKeys(void) {
+    return @[ @"manufacturer", @"product_id", @"product_name",
+              @"display_controller_id", @"firmware_version", @"local_dimming_range_max" ];
+}
+
+NSDictionary *HCReadIdentityValues(IOAVServiceRef av, NSDictionary *attrs, NSString **why) {
     NSString *mfr = attrs[@"ManufacturerID"], *product = attrs[@"ProductName"];
     NSNumber *pid = attrs[@"ProductID"];
     if (![mfr isKindOfClass:NSString.class] || ![product isKindOfClass:NSString.class] ||
@@ -309,9 +315,21 @@ NSString *HCReadIdentity(IOAVServiceRef av, NSDictionary *attrs, NSString **why)
         if (!ok) { *why = [NSString stringWithFormat:@"%s: no reply (DDC busy? quit MonitorControl and retry)", vcp[i].what]; return nil; }
         got[i] = vcp[i].useMax ? max : cur;
     }
+    return @{ @"manufacturer": mfr, @"product_id": @(pid.longLongValue), @"product_name": product,
+              @"display_controller_id": @(got[0]), @"firmware_version": @(got[1]), @"local_dimming_range_max": @(got[2]) };
+}
+
+NSString *HCIdentityJSON(NSDictionary *identity) {
+    NSString *mfr = identity[@"manufacturer"], *product = identity[@"product_name"];
+    NSNumber *pid = identity[@"product_id"], *ctl = identity[@"display_controller_id"],
+             *fw = identity[@"firmware_version"], *ld = identity[@"local_dimming_range_max"];
+    if (![mfr isKindOfClass:NSString.class] || ![product isKindOfClass:NSString.class] ||
+        ![pid isKindOfClass:NSNumber.class] || ![ctl isKindOfClass:NSNumber.class] ||
+        ![fw isKindOfClass:NSNumber.class] || ![ld isKindOfClass:NSNumber.class]) return nil;
     return [NSString stringWithFormat:@"{\"manufacturer\":%@,\"product_id\":%lld,\"product_name\":%@,"
-                                       "\"display_controller_id\":%u,\"firmware_version\":%u,\"local_dimming_range_max\":%u}",
-            jsonString(mfr), pid.longLongValue, jsonString(product), got[0], got[1], got[2]];
+                                       "\"display_controller_id\":%lld,\"firmware_version\":%lld,\"local_dimming_range_max\":%lld}",
+            jsonString(mfr), pid.longLongValue, jsonString(product),
+            ctl.longLongValue, fw.longLongValue, ld.longLongValue];
 }
 
 NSString *HCSHA256Hex(NSString *s) {
@@ -334,18 +352,92 @@ NSDictionary *HCLoadDB(NSString **error) {
     return db;
 }
 
-NSString *HCReadMyMonitor(void) {
-    NSString *path = dataPath(@"my_monitor");
-    NSString *s = path ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL] : nil;
-    return [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+NSString *HCMyMonitorPath(void) { return dataPath(@"my_monitor.json"); }
+
+NSString *HCReadMyMonitor(NSDictionary **identity, NSString **why) {
+    NSString *path = HCMyMonitorPath();
+    NSData *d = path ? [NSData dataWithContentsOfFile:path] : nil;
+    if (!d) { *why = @"my_monitor.json not found (run: hdrctl identify --save)"; return nil; }
+    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL];
+    if (![json isKindOfClass:NSDictionary.class] || json.count != 1) {
+        *why = @"my_monitor.json isn't valid: it must be a JSON object with one monitor (run: hdrctl identify --save)";
+        return nil;
+    }
+    NSString *hash = json.allKeys.firstObject;
+    NSDictionary *entry = json[hash];
+    NSDictionary *ident = [entry isKindOfClass:NSDictionary.class] ? entry[@"identity"] : nil;
+    NSString *canonical = [ident isKindOfClass:NSDictionary.class] ? HCIdentityJSON(ident) : nil;
+    if (!canonical) {
+        *why = @"my_monitor.json isn't valid: its identity section is missing or incomplete (run: hdrctl identify --save)";
+        return nil;
+    }
+    if (![HCSHA256Hex(canonical) isEqualToString:hash]) {
+        *why = @"my_monitor.json isn't valid: its key doesn't match its identity section (run: hdrctl identify --save)";
+        return nil;
+    }
+    if (identity) *identity = ident;
+    return hash;
+}
+
+BOOL HCSaveMyMonitor(NSDictionary *identity, NSString **error) {
+    NSString *canonical = HCIdentityJSON(identity), *path = HCMyMonitorPath();
+    if (!canonical) return fail(error, @"incomplete identity");
+    if (!path) return fail(error, @"can't find hdrctl's own folder");
+    NSMutableArray *rows = [NSMutableArray array];
+    for (NSString *k in identityKeys()) {
+        id v = identity[k];
+        [rows addObject:[NSString stringWithFormat:@"      \"%@\": %@", k,
+                         [v isKindOfClass:NSString.class] ? jsonString(v) : [v stringValue]]];
+    }
+    NSString *text = [NSString stringWithFormat:@"{\n  \"%@\": {\n    \"identity\": {\n%@\n    }\n  }\n}\n",
+                      HCSHA256Hex(canonical), [rows componentsJoinedByString:@",\n"]];
+    NSError *err = nil;
+    if (![text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err])
+        return fail(error, @"%@", err.localizedDescription);
+    [[NSFileManager defaultManager] removeItemAtPath:dataPath(@"my_monitor") error:NULL];   // old one-line format
+    return YES;
+}
+
+void HCEnsureMyMonitor(NSDictionary *identity) {
+    NSString *path = HCMyMonitorPath();
+    if (!path || [[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+    NSString *oldPath = dataPath(@"my_monitor");
+    NSString *oldHash = [[NSString stringWithContentsOfFile:oldPath encoding:NSUTF8StringEncoding error:NULL]
+                         stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *err = nil;
+    if (!HCSaveMyMonitor(identity, &err)) { logWarn(@"couldn't create %@: %@", path, err); return; }
+    NSString *hash = HCSHA256Hex(HCIdentityJSON(identity));
+    if (oldHash)
+        logInfo(@"Replaced %@ with my_monitor.json for %@%@", oldPath, identity[@"product_name"],
+                [oldHash isEqualToString:hash] ? @""
+                    : [NSString stringWithFormat:@" (the old file was for a different monitor, %@)", oldHash]);
+    else
+        logInfo(@"Created %@ for %@ (%@)", path, identity[@"product_name"], hash);
+}
+
+// "firmware_version is 1, my_monitor.json has 0" for each field that differs.
+static NSString *identityDiff(NSDictionary *live, NSDictionary *mine) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *k in identityKeys())
+        if (![live[k] isEqual:mine[k]])
+            [out addObject:[NSString stringWithFormat:@"%@ is %@, my_monitor.json has %@", k, live[k], mine[k]]];
+    return out.count ? [out componentsJoinedByString:@"; "] : nil;
 }
 
 NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString **why, NSString **error) {
-    NSString *identity = HCReadIdentity(av, attrs, why);
-    if (!identity) return nil;
-    NSString *hash = HCSHA256Hex(identity), *mine = HCReadMyMonitor();
-    if (!mine.length) { *why = @"my_monitor not found next to hdrctl (see hdrctl identify)"; return nil; }
-    if (![hash isEqualToString:mine]) { *why = [NSString stringWithFormat:@"connected monitor is %@, my_monitor is %@", hash, mine]; return nil; }
+    NSDictionary *live = HCReadIdentityValues(av, attrs, why);
+    if (!live) return nil;
+    NSString *hash = HCSHA256Hex(HCIdentityJSON(live));
+    HCEnsureMyMonitor(live);
+    NSDictionary *mineIdentity = nil;
+    NSString *mine = HCReadMyMonitor(&mineIdentity, why);
+    if (!mine) return nil;
+    if (![hash isEqualToString:mine]) {
+        *why = [NSString stringWithFormat:@"connected monitor doesn't match my_monitor.json: %@ "
+                                           "(if this is your monitor, run: hdrctl identify --save)",
+                identityDiff(live, mineIdentity) ?: hash];
+        return nil;
+    }
     NSDictionary *db = HCLoadDB(error);
     if (!db) return nil;
     NSDictionary *entry = db[hash];

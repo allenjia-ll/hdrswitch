@@ -11,7 +11,7 @@
 //   hdrctl profile <name|path>       color profile only
 //   hdrctl ddc dump|get <code>       read monitor settings (DDC/CI VCP codes)
 //   hdrctl ddc set <code> <value>    local dimming level listed in monitor_db.json (the only DDC write allowed)
-//   hdrctl identify                  print the monitor's identity and hash (for my_monitor / monitor_db.json)
+//   hdrctl identify [--save]         print the monitor's identity and hash; --save rewrites my_monitor.json
 //
 // Options:
 //   --display <text>       part of the display name (default: M27P6S)
@@ -60,7 +60,7 @@ static void usage(int code) {
         "  ddc dump              read all monitor settings (DDC/CI VCP codes)\n"
         "  ddc get <code>        read one VCP code (e.g. 0xF4)\n"
         "  ddc set <code> <value> local dimming level listed in monitor_db.json (the only write allowed)\n"
-        "  identify              print the monitor's identity and hash (for my_monitor / monitor_db.json)\n"
+        "  identify [--save]     print the monitor's identity and hash; --save rewrites my_monitor.json\n"
         "\n"
         "A profile <spec> is either a path to an .icc/.icm file or (part of) the\n"
         "profile's name as shown in System Settings > Displays > Color profile.\n");
@@ -183,15 +183,22 @@ int main(int argc, const char *argv[]) {
             NSDictionary *attrs = nil;
             IOAVServiceRef av = HCFindAVService(needle, &attrs, &err);
             if (!av) die(@"%@", err);
-            NSString *identity = HCReadIdentity(av, attrs, &why);
-            if (!identity) die(@"%@", why);
-            NSString *hash = HCSHA256Hex(identity), *mine = HCReadMyMonitor();
+            NSDictionary *live = HCReadIdentityValues(av, attrs, &why);
+            if (!live) die(@"%@", why);
+            NSString *identity = HCIdentityJSON(live), *hash = HCSHA256Hex(identity);
+            if ([args containsObject:@"--save"]) {
+                if (!HCSaveMyMonitor(live, &err)) die(@"couldn't write %@: %@", HCMyMonitorPath(), err);
+                say(@"Saved %@", HCMyMonitorPath());
+            } else {
+                HCEnsureMyMonitor(live);
+            }
+            NSString *mineWhy = nil, *mine = HCReadMyMonitor(NULL, &mineWhy);
             say(@"Identity:        %@", identity);
             say(@"Hash:            %@", hash);
             NSDictionary *db = HCLoadDB(&err);
             if (!db) die(@"%@", err);
             say(@"monitor_db.json: %@", db[hash] ? @"listed" : @"not listed");
-            say(@"my_monitor:      %@", !mine.length ? @"not found" : [mine isEqualToString:hash] ? @"matches" : @"different monitor");
+            say(@"my_monitor.json: %@", !mine ? mineWhy : [mine isEqualToString:hash] ? @"matches" : @"different monitor");
             return 0;
         }
 

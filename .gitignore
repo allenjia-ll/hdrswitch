@@ -6,5 +6,6 @@ hdrctl.exe
 .DS_Store
 dist/
 my_monitor
+my_monitor.json
 mac/monitor_db.json
 win/monitor_db.json

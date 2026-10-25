@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `monitor_db.json`: the KTC M27P6S entry now maps all 5 local dimming levels (off 0, auto 1, low 4, standard 2, high 3), found with `hdrctl detect`, and sets `hdr_on` / `hdr_off` to standard / off (the same as before). It also records how it was detected in a `report` section.
+
 ## [0.1.8-mac] - 2026-10-25
 
 A macOS-only release. Windows is unchanged since 0.1.7-win and no new Windows binary ships here;

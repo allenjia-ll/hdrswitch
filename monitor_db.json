@@ -17,11 +17,33 @@
             "value": 0
           },
           {
+            "name": "auto",
+            "value": 1
+          },
+          {
+            "name": "low",
+            "value": 4
+          },
+          {
             "name": "standard",
             "value": 2
+          },
+          {
+            "name": "high",
+            "value": 3
           }
-        ]
+        ],
+        "hdr_on": "standard",
+        "hdr_off": "off"
       }
+    },
+    "report": {
+      "connection": "USB-C",
+      "detected": "2026-10-25T21:05:44Z",
+      "os": "Version 27.0.1 (Build 26A434)",
+      "osd_firmware": "USA-1.0.1",
+      "tool": "hdrctl detect",
+      "verified_by_user": true
     }
   }
 }

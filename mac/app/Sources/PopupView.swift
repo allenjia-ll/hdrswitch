@@ -77,11 +77,14 @@ struct PopupView: View {
             Divider()
                 .padding(.top, 12)
                 .padding(.bottom, 6)
-            Group {
-                MenuRow(title: "HDR Switch Settings…", hover: settingsRowHover, action: openSettings)
-                MenuRow(title: "Quit HDR Switch", hover: quitRowHover) { NSApp.terminate(nil) }
-            }
-            .padding(.horizontal, -8)   // text lines up with the title; the highlight extends past it
+            // As in the design: "⚙ Settings…", a divider, then "Quit HDR Switch". The rows' text lines up
+            // with the title, and their hover highlight extends past it.
+            MenuRow(title: "Settings…", systemImage: "gearshape", hover: settingsRowHover, action: openSettings)
+                .padding(.horizontal, -8)
+            Divider()
+                .padding(.vertical, 6)
+            MenuRow(title: "Quit HDR Switch", hover: quitRowHover) { NSApp.terminate(nil) }
+                .padding(.horizontal, -8)
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
@@ -280,15 +283,21 @@ final class HoverState: ObservableObject {
     @Published var hovering = false
 }
 
-// A menu-style row that highlights on hover, like "Display Settings…".
+// A menu-style row that highlights on hover, like "Display Settings…", with an optional icon in front.
 struct MenuRow: View {
     let title: String
+    var systemImage: String? = nil
     @ObservedObject var hover: HoverState
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(title)
+            HStack(spacing: 7) {
+                if let systemImage = systemImage {
+                    Image(systemName: systemImage)
+                }
+                Text(title)
+            }
                 .font(.system(size: 13))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)

@@ -1,5 +1,6 @@
-// The popup's contents, laid out like Control Center's Displays popup: the monitor's name, a round
-// HDR toggle tile, the current color profile and local dimming, a divider, and a settings row.
+// The popup's contents, laid out like Control Center's Displays popup: the monitor's name with a
+// refresh button, a round HDR toggle tile, color profile and local dimming dropdowns, a divider, and
+// a settings row.
 
 import AppKit
 import SwiftUI
@@ -21,17 +22,47 @@ struct PopupView: View {
                         .help("This monitor isn't supported. HDR Switch will only switch HDR and the color "
                               + "profile, and won't touch the monitor's local dimming setting.")
                 }
+                Spacer()
+                if model.busy {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
+                        .frame(width: 18, height: 18)
+                } else {
+                    Button(action: model.refresh) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 18, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                    .help("Refresh")
+                }
             }
+            .frame(height: 18)
             .padding(.bottom, 12)
             HStack {
                 HDRTile(model: model)
                 Spacer()
             }
-            VStack(alignment: .leading, spacing: 2) {
-                InfoLine(label: "Color profile", value: model.profile.isEmpty ? "—" : model.profile)
-                InfoLine(label: "Local dimming", value: model.dimming)
+            VStack(alignment: .leading, spacing: 6) {
+                SettingRow(label: "Color profile") {
+                    Dropdown(options: model.profiles, selection: model.profile.isEmpty ? "—" : model.profile,
+                             select: model.selectProfile)
+                        .disabled(!model.canChange)
+                }
+                SettingRow(label: "Local dimming") {
+                    if model.support == .supported && !model.dimmingLevels.isEmpty {
+                        Dropdown(options: model.dimmingLevels, selection: model.dimming, select: model.selectDimming)
+                            .disabled(!model.canChange)
+                    } else {
+                        Text(model.dimming)   // unknown, or the monitor isn't supported
+                            .padding(.leading, 10)   // lines up with the dropdown's text
+                    }
+                }
             }
-            .padding(.top, 10)
+            .padding(.top, 12)
             if let warning = model.warning {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -71,10 +102,10 @@ struct HDRTile: View {
                     .foregroundColor(model.hdrOn ? .white : .primary)
                     .frame(width: 38, height: 38)
                     .background(Circle().fill(model.hdrOn ? Color.accentColor : Color.primary.opacity(0.14)))
-                    .opacity(model.canToggle ? 1 : 0.5)
+                    .opacity(model.canChange ? 1 : 0.5)
             }
             .buttonStyle(.plain)
-            .disabled(!model.canToggle)
+            .disabled(!model.canChange)
             .padding(.bottom, 3)
             Text("HDR")
                 .font(.system(size: 12, weight: .semibold))
@@ -87,17 +118,39 @@ struct HDRTile: View {
     }
 }
 
-// "Label: value" under the HDR tile.
-struct InfoLine: View {
+// "Label   [control]" under the HDR tile, with the labels in one column.
+struct SettingRow<Content: View>: View {
     let label: String
-    let value: String
+    @ViewBuilder let content: () -> Content
 
     var body: some View {
-        HStack(spacing: 4) {
-            Text(label + ":").foregroundColor(.secondary)
-            Text(value).lineLimit(1).truncationMode(.middle)
+        HStack(spacing: 8) {
+            Text(label)
+                .foregroundColor(.secondary)
+                .frame(width: 86, alignment: .leading)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .font(.system(size: 11))
+    }
+}
+
+// A pop-up menu of `options`. The current value is listed too if it isn't one of them (e.g. a
+// profile from outside the ColorSync folders), so the menu always shows what's actually set.
+struct Dropdown: View {
+    let options: [String]
+    let selection: String
+    let select: (String) -> Void
+
+    var body: some View {
+        Picker("", selection: Binding(get: { selection }, set: select)) {
+            ForEach(options.contains(selection) ? options : [selection] + options, id: \.self) { option in
+                Text(option).tag(option)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .controlSize(.small)
     }
 }
 

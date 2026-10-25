@@ -137,6 +137,12 @@ NSString *HCCurrentProfile(CGDirectDisplayID d) {
     return s ?: @"(unknown)";
 }
 
+static NSArray<NSString *> *profileDirs(void) {
+    return @[ [@"~/Library/ColorSync/Profiles" stringByExpandingTildeInPath],
+              @"/Library/ColorSync/Profiles",
+              @"/System/Library/ColorSync/Profiles" ];
+}
+
 // Search order: ~/Library, /Library, /System/Library ColorSync profile folders.
 NSURL *HCResolveProfile(NSString *spec, NSString **error) {
     NSString *lower = spec.lowercaseString;
@@ -148,12 +154,9 @@ NSURL *HCResolveProfile(NSString *spec, NSString **error) {
         return [NSURL fileURLWithPath:path];
     }
 
-    NSArray *dirs = @[ [@"~/Library/ColorSync/Profiles" stringByExpandingTildeInPath],
-                       @"/Library/ColorSync/Profiles",
-                       @"/System/Library/ColorSync/Profiles" ];
     NSURL *partial = nil;
     NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *dir in dirs) {
+    for (NSString *dir in profileDirs()) {
         NSDirectoryEnumerator *e = [fm enumeratorAtURL:[NSURL fileURLWithPath:dir isDirectory:YES]
                             includingPropertiesForKeys:nil
                                                options:NSDirectoryEnumerationSkipsHiddenFiles
@@ -172,6 +175,36 @@ NSURL *HCResolveProfile(NSString *spec, NSString **error) {
     }
     if (!partial) { fail(error, @"no installed color profile named like \"%@\"", spec); return nil; }
     return partial;
+}
+
+NSArray<NSDictionary *> *HCListProfiles(void) {
+    NSMutableDictionary<NSString *, NSURL *> *byName = [NSMutableDictionary dictionary];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *dir in profileDirs()) {
+        NSDirectoryEnumerator *e = [fm enumeratorAtURL:[NSURL fileURLWithPath:dir isDirectory:YES]
+                            includingPropertiesForKeys:nil
+                                               options:NSDirectoryEnumerationSkipsHiddenFiles
+                                          errorHandler:nil];
+        for (NSURL *url in e) {
+            NSString *ext = url.pathExtension.lowercaseString;
+            if (![ext isEqualToString:@"icc"] && ![ext isEqualToString:@"icm"]) continue;
+            ColorSyncProfileRef p = ColorSyncProfileCreateWithURL((__bridge CFURLRef)url, NULL);
+            if (!p) continue;
+            NSString *desc = profileDescription(p);
+            NSData *header = CFBridgingRelease(ColorSyncProfileCopyHeader(p));
+            CFRelease(p);
+            // ICC header: profile class at byte 12, data color space at byte 16. ColorSync returns the
+            // header in host byte order, so compare them as 32-bit values: 'mntr' (display) and 'RGB '.
+            uint32_t cls = 0, space = 0;
+            if (header.length >= 20) { memcpy(&cls, (const char *)header.bytes + 12, 4); memcpy(&space, (const char *)header.bytes + 16, 4); }
+            if (!desc || cls != 0x6D6E7472 || space != 0x52474220) continue;
+            if (!byName[desc]) byName[desc] = url;   // the first folder in search order wins, as in HCResolveProfile
+        }
+    }
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *name in [byName.allKeys sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)])
+        [out addObject:@{ @"name": name, @"url": byName[name] }];
+    return out;
 }
 
 BOOL HCSetProfile(CGDirectDisplayID d, NSURL *url, NSString **error) {
@@ -233,36 +266,48 @@ IOAVServiceRef HCFindAVService(NSString *needle, NSDictionary **outAttrs, NSStri
 }
 
 // IOAVService calls block for as long as the monitor doesn't answer (e.g. while it's asleep), and
-// they can't be cancelled. So each call runs on a serial queue and we stop waiting after 3 s. Until
-// a timed-out call returns, further calls fail at once instead of queueing behind it.
+// they can't be cancelled. So each call runs on another thread and we stop waiting after 3 s. Until
+// a timed-out call returns, further calls on the same service fail at once instead of piling up
+// behind it. A newly created service (HCFindAVService) isn't affected, so a long-running app
+// recovers by reconnecting even if a stuck call never returns.
 
 static const int64_t kDDCTimeoutSeconds = 3;
-static atomic_int  gDDCPending;    // calls dispatched but not yet returned (0 or 1)
 static atomic_bool gDDCTimedOut;   // a call timed out since HCDDCClearTimeout
+static NSMutableSet<NSValue *> *gStuckServices;   // services with a timed-out call still running
 
 BOOL HCDDCDidTimeOut(void)  { return atomic_load(&gDDCTimedOut); }
 void HCDDCClearTimeout(void) { atomic_store(&gDDCTimedOut, false); }
 
 static IOReturn i2c(IOAVServiceRef av, BOOL write, uint32_t offset, uint8_t *buf, uint32_t len) {
-    static dispatch_queue_t queue;
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ queue = dispatch_queue_create("hdrcore.ddc", DISPATCH_QUEUE_SERIAL); });
-
-    if (atomic_load(&gDDCPending) > 0) { atomic_store(&gDDCTimedOut, true); return kIOReturnTimeout; }
+    dispatch_once(&once, ^{ gStuckServices = [NSMutableSet set]; });
+    // The block retains the service until it returns, so its address can't be reused while it's stuck.
+    NSValue *key = [NSValue valueWithPointer:av];
+    @synchronized (gStuckServices) {
+        if ([gStuckServices containsObject:key]) { atomic_store(&gDDCTimedOut, true); return kIOReturnTimeout; }
+    }
     // The block can outlive this call if it times out, so it keeps its own buffer and service reference.
     NSMutableData *data = [NSMutableData dataWithBytes:buf length:len];
     CFTypeRef service = CFRetain(av);
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
     __block IOReturn result = kIOReturnTimeout;
-    atomic_fetch_add(&gDDCPending, 1);
-    dispatch_async(queue, ^{
-        result = write ? IOAVServiceWriteI2C(service, 0x37, offset, data.mutableBytes, len)
-                       : IOAVServiceReadI2C(service, 0x37, offset, data.mutableBytes, len);
+    __block BOOL finished = NO;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        IOReturn r = write ? IOAVServiceWriteI2C(service, 0x37, offset, data.mutableBytes, len)
+                           : IOAVServiceReadI2C(service, 0x37, offset, data.mutableBytes, len);
+        @synchronized (gStuckServices) {
+            result = r;
+            finished = YES;
+            [gStuckServices removeObject:key];
+        }
         CFRelease(service);
-        atomic_fetch_sub(&gDDCPending, 1);
         dispatch_semaphore_signal(done);
     });
     if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, kDDCTimeoutSeconds * NSEC_PER_SEC)) != 0) {
+        @synchronized (gStuckServices) {
+            if (finished) { if (!write) memcpy(buf, data.bytes, len); return result; }   // returned just as we gave up
+            [gStuckServices addObject:key];
+        }
         if (!atomic_exchange(&gDDCTimedOut, true))
             logWarn(@"the monitor didn't answer over DDC within %lld seconds (asleep?)", kDDCTimeoutSeconds);
         return kIOReturnTimeout;

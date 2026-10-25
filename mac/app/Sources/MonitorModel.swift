@@ -14,13 +14,17 @@ final class MonitorModel: ObservableObject {
     @Published private(set) var connected = false
     @Published private(set) var hdrOn = false
     @Published private(set) var profile = ""
+    @Published private(set) var profiles: [String] = []          // installed RGB display profiles
     @Published private(set) var support = Support.unknown
     @Published private(set) var dimming = "Unknown"
-    @Published private(set) var switching = false
+    @Published private(set) var dimmingLevels: [String] = []     // from monitor_db.json, by value
+    @Published private(set) var switching = false                // HDR toggle running
+    @Published private(set) var busy = false                     // any lookup or change running
     @Published private(set) var warning: String?
 
     private let skyLightLoaded: Bool
-    private let work = DispatchQueue(label: "HDR Switch work")   // one switch or DDC lookup at a time
+    private var profileURLs: [String: URL] = [:]
+    private let work = DispatchQueue(label: "HDR Switch work")   // one lookup or change at a time
 
     init() {
         var err: NSString?
@@ -28,7 +32,7 @@ final class MonitorModel: ObservableObject {
         if !skyLightLoaded { warning = (err as String?) ?? "Can't load SkyLight, so HDR can't be switched." }
     }
 
-    var canToggle: Bool { skyLightLoaded && connected && !switching }
+    var canChange: Bool { skyLightLoaded && connected && !busy }
 
     var stateText: String {
         if switching { return "Switching…" }
@@ -36,70 +40,94 @@ final class MonitorModel: ObservableObject {
         return hdrOn ? "On" : "Off"
     }
 
-    // HDR state and profile are cheap; local dimming needs DDC reads, so it's filled in from `work`.
+    // Re-reads everything. Local dimming needs DDC reads, so it runs on `work`, over a new DDC
+    // connection each time.
     func refresh() {
-        guard skyLightLoaded, !switching, let d = findDisplay() else { return }
+        guard skyLightLoaded, !busy, let d = findDisplay() else { return }
         hdrOn = HCIsHDR(d)
         profile = HCCurrentProfile(d)
         if support != .unsupported { dimming = "…" }
-        work.async {
-            HCDDCClearTimeout()
-            let snapshot = self.snapshot(d, self.lookUpDimming())
-            DispatchQueue.main.async {
-                self.apply(snapshot)
-                self.warning = snapshot.timedOut ? Self.timeoutWarning
-                             : snapshot.unreachable ? Self.noReplyWarning : nil
-            }
-        }
+        run(d, warnIfSkipped: nil) { _ in nil }
     }
 
     // The same steps as hdrctl on/off: HDR, then the color profile, then local dimming, which is
-    // skipped if the monitor isn't supported. Switching takes ~12 s, so it runs on `work`.
+    // skipped if the monitor isn't supported.
     func toggleHDR() {
-        guard canToggle, let d = findDisplay() else { return }
+        guard canChange, let d = findDisplay() else { return }
         let on = !HCIsHDR(d)
         switching = true
-        warning = nil
-        work.async {
-            HCDDCClearTimeout()
+        run(d, warnIfSkipped: Self.notChanged) { lookup in
             var err: NSString?
-            var problem: String?
-            let lookup = self.lookUpDimming()   // before changing anything, like hdrctl
-            if let url = HCResolveProfile(on ? Self.hdrProfile : Self.sdrProfile, &err) {
-                if !HCSetHDR(d, on, &err) {
-                    problem = err as String?
-                } else if !HCSetProfile(d, url, &err) {
-                    problem = err as String?
-                } else if let dim = lookup.dimming, let level = dim.levels[on ? "standard" : "off"],
-                          !HCSetDimming(dim.av, dim.code, level.uint16Value, on ? "standard" : "off") {
-                    problem = "Couldn't confirm the local dimming change. Another DDC app (e.g. MonitorControl) may be using the monitor."
-                }
-            } else {
-                problem = err as String?
+            guard let url = HCResolveProfile(on ? Self.hdrProfile : Self.sdrProfile, &err) else { return err as String? }
+            if !HCSetHDR(d, on, &err) { return err as String? }
+            if !HCSetProfile(d, url, &err) { return err as String? }
+            if let dim = lookup.dimming, let level = dim.levels[on ? "standard" : "off"],
+               !HCSetDimming(dim.av, dim.code, level.uint16Value, on ? "standard" : "off") {
+                return Self.notConfirmed
             }
-            let snapshot = self.snapshot(d, lookup)
-            let skipped = { if case .unreachable = lookup { return true } else { return false } }()
-            DispatchQueue.main.async {
-                self.switching = false
-                self.apply(snapshot)
-                self.warning = problem
-                    ?? (snapshot.timedOut ? (skipped ? Self.timeoutWarningAfterSwitch : Self.timeoutWarning)
-                        : skipped ? Self.noReplyWarningAfterSwitch
-                        : snapshot.unreachable ? Self.noReplyWarning : nil)
-            }
+            return nil
         }
     }
 
-    static let timeoutWarning =
-        "The monitor didn't respond within 3 seconds, so its local dimming setting is unknown."
-    static let timeoutWarningAfterSwitch =
-        "The monitor didn't respond within 3 seconds, so its local dimming setting wasn't changed."
-    static let noReplyWarning =
-        "The monitor didn't answer over DDC, so its local dimming setting is unknown. Try again in a moment."
-    static let noReplyWarningAfterSwitch =
-        "The monitor didn't answer over DDC, so its local dimming setting wasn't changed. Try again in a moment."
+    // Applies the profile now, like `hdrctl profile`. The HDR toggle still uses its defaults.
+    func selectProfile(_ name: String) {
+        guard canChange, name != profile, let url = profileURLs[name], let d = findDisplay() else { return }
+        profile = name
+        run(d, warnIfSkipped: nil) { _ in
+            var err: NSString?
+            return HCSetProfile(d, url, &err) ? nil : err as String?
+        }
+    }
+
+    // Writes one of the monitor's local dimming levels from monitor_db.json.
+    func selectDimming(_ level: String) {
+        guard canChange, level != dimming, support == .supported, let d = findDisplay() else { return }
+        dimming = level
+        run(d, warnIfSkipped: Self.notChanged) { lookup in
+            guard let dim = lookup.dimming, let value = dim.levels[level.lowercased()] else { return nil }
+            return HCSetDimming(dim.av, dim.code, value.uint16Value, level.lowercased()) ? nil : Self.notConfirmed
+        }
+    }
+
+    static let timeoutWarning = "The monitor didn't respond within 3 seconds, so its local dimming setting is unknown."
+    static let timeoutNotChanged = "The monitor didn't respond within 3 seconds, so its local dimming setting wasn't changed."
+    static let noReplyWarning = "The monitor didn't answer over DDC, so its local dimming setting is unknown. Try Refresh."
+    static let notChanged = "The monitor didn't answer over DDC, so its local dimming setting wasn't changed. Try again in a moment."
+    static let notConfirmed = "Couldn't confirm the local dimming change. Another DDC app (e.g. MonitorControl) may be using the monitor."
 
     // MARK: - Private
+
+    // Runs `change` on `work` after looking up the monitor (before anything changes, like hdrctl),
+    // then reads everything back. `change` returns a problem to show, or nil. `warnIfSkipped` is
+    // shown if the monitor couldn't be reached, so local dimming wasn't touched.
+    private func run(_ d: CGDirectDisplayID, warnIfSkipped: String?, _ change: @escaping (Lookup) -> String?) {
+        busy = true
+        warning = nil
+        work.async {
+            HCDDCClearTimeout()
+            let lookup = self.lookUpDimming()
+            let problem = change(lookup)
+            let snapshot = self.snapshot(d, lookup)
+            let profiles = HCListProfiles().compactMap { p -> (String, URL)? in
+                guard let name = p["name"] as? String, let url = p["url"] as? URL else { return nil }
+                return (name, url)
+            }
+            DispatchQueue.main.async {
+                self.busy = false
+                self.switching = false
+                self.profileURLs = Dictionary(profiles, uniquingKeysWith: { a, _ in a })
+                self.profiles = profiles.map { $0.0 }
+                self.apply(snapshot)
+                if let problem = problem {
+                    self.warning = problem
+                } else if case .unreachable = lookup, let skipped = warnIfSkipped {
+                    self.warning = snapshot.timedOut ? Self.timeoutNotChanged : skipped
+                } else if snapshot.unreachable {
+                    self.warning = snapshot.timedOut ? Self.timeoutWarning : Self.noReplyWarning
+                }
+            }
+        }
+    }
 
     private func findDisplay() -> CGDirectDisplayID? {
         var found: NSString?, err: NSString?
@@ -154,15 +182,18 @@ final class MonitorModel: ObservableObject {
         let profile: String
         let support: Support
         let dimming: String
+        let levels: [String]
         let unreachable: Bool   // DDC didn't answer (or timed out), so local dimming is unknown
         let timedOut: Bool
     }
 
     private func snapshot(_ d: CGDirectDisplayID, _ lookup: Lookup) -> Snapshot {
         var level = "Unknown"
+        var levels: [String] = []
         if let dim = lookup.dimming {
+            levels = dim.levels.sorted { $0.value.intValue < $1.value.intValue }.map { $0.key.capitalized }
             var cur: UInt16 = 0
-            // Right after an HDR switch the monitor is busy for a moment, so retry like the identity reads.
+            // Right after a change the monitor is busy for a moment, so retry like the identity reads.
             for attempt in 0..<10 where !HCDDCDidTimeOut() {
                 if attempt > 0 { usleep(300_000) }
                 if HCDDCGet(dim.av, dim.code, &cur, nil) {
@@ -178,9 +209,9 @@ final class MonitorModel: ObservableObject {
         case .unsupported: support = .unsupported
         case .unreachable: support = .unknown   // says nothing about whether it's supported
         }
-        let unreachable = timedOut || (support == .unknown) || (support == .supported && level == "Unknown")
+        let unreachable = timedOut || support == .unknown || (support == .supported && level == "Unknown")
         return Snapshot(hdrOn: HCIsHDR(d), profile: HCCurrentProfile(d), support: support, dimming: level,
-                        unreachable: unreachable, timedOut: timedOut)
+                        levels: levels, unreachable: unreachable, timedOut: timedOut)
     }
 
     private func apply(_ s: Snapshot) {
@@ -188,5 +219,6 @@ final class MonitorModel: ObservableObject {
         profile = s.profile
         support = s.support
         dimming = s.dimming
+        dimmingLevels = s.levels
     }
 }

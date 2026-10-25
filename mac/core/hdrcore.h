@@ -43,6 +43,8 @@ CGDirectDisplayID HCFindDisplay(NSString *needle, NSString **outName, NSString *
 NSString *HCCurrentProfile(CGDirectDisplayID d);
 // An .icc/.icm path, or a profile name (exact match preferred, then substring).
 NSURL *HCResolveProfile(NSString *spec, NSString **error);
+// Installed RGB display profiles, sorted by name: @{ @"name": NSString, @"url": NSURL }.
+NSArray<NSDictionary *> *HCListProfiles(void);
 BOOL HCSetProfile(CGDirectDisplayID d, NSURL *url, NSString **error);
 
 // -------------------------------------------------------------------- DDC --
@@ -51,7 +53,8 @@ typedef CFTypeRef IOAVServiceRef;
 // The DDC/CI service of the external display whose name contains needle, or NULL with *error set.
 // outAttrs gets the display's EDID ProductAttributes. Release the service with CFRelease.
 IOAVServiceRef HCFindAVService(NSString *needle, NSDictionary **outAttrs, NSString **error);
-// Every DDC call gives up after 3 s (a sleeping monitor never answers), logging one warning.
+// Every DDC call gives up after 3 s (a sleeping monitor never answers), logging one warning. A
+// service with a timed-out call still running fails at once; a new one from HCFindAVService works.
 // HCDDCDidTimeOut says whether a call timed out since HCDDCClearTimeout.
 BOOL HCDDCDidTimeOut(void);
 void HCDDCClearTimeout(void);

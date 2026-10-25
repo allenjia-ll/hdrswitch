@@ -10,11 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - macOS menu bar app (in progress), in `mac/app/`: a menu bar icon (`menu_icon`) that opens a Control Center–style panel with the monitor's name, an HDR toggle, the current color profile and local dimming setting, and an **HDR Switch Settings…** row, which opens an empty settings window. The toggle does the same as `hdrctl on` / `off`. For a monitor that isn't supported, the name gets an exclamation mark (with an explanation on hover) and the toggle leaves local dimming alone. `monitor_db.json` ships in the app; `my_monitor.json` is kept in `~/Library/Application Support/HDR Switch/`. Built with `mac/app/build.sh`; runs on macOS 12 or later.
-- `HCSetDBPath` and `HCFindMonitorForIdentity` in `mac/core`, for the app.
+- Menu bar app: color profile and local dimming dropdowns (installed RGB display profiles; the levels in `monitor_db.json`), applied when picked, and a refresh button that re-reads everything.
+- `HCSetDBPath`, `HCFindMonitorForIdentity` and `HCListProfiles` in `mac/core`, for the app.
 
 ### Changed
 
-- macOS: every DDC call gives up after 3 seconds, so a sleeping monitor no longer makes `hdrctl` (or the app) hang. The CLI prints `warning: the monitor didn't answer over DDC within 3 seconds (asleep?)` and fails as if the monitor gave no reply; the app shows a warning in its panel.
+- macOS: every DDC call gives up after 3 seconds (tracked per DDC connection, so a call that never returns doesn't block a new connection), so a sleeping monitor no longer makes `hdrctl` (or the app) hang. The CLI prints `warning: the monitor didn't answer over DDC within 3 seconds (asleep?)` and fails as if the monitor gave no reply; the app shows a warning in its panel.
 
 ## [0.1.6] - 2026-10-24
 

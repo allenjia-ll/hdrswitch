@@ -22,7 +22,7 @@
 // Color profiles use the public ColorSync API (same as System Settings > Displays > Color profile).
 // Local dimming is set on the monitor over DDC/CI via IOAVService (private IOKit API, Apple Silicon).
 //
-// Build: clang -fobjc-arc -O2 -Wall -framework AppKit -framework ApplicationServices -framework IOKit hdrctl.m -o hdrctl
+// Build: mac/build.sh, or: clang -fobjc-arc -O2 -Wall -framework AppKit -framework ApplicationServices -framework IOKit hdrctl.m -o hdrctl
 
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>

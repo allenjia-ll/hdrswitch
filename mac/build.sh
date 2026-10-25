@@ -13,4 +13,4 @@ clang -fobjc-arc -O2 -Wall -mmacosx-version-min=12.0 \
   hdrctl.m -o hdrctl
 
 echo "Built $(pwd)/hdrctl"
-echo "Optional: sudo cp hdrctl /usr/local/bin/"
+echo "Optional: sudo ln -s \"$(pwd)/hdrctl\" /usr/local/bin/hdrctl  (a copy would need monitor_db.json and my_monitor next to it)"

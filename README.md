@@ -38,12 +38,12 @@ hdrctl.exe --display "<part of display name>" hdr on
 
 macOS:
 
-- `hdrctl.m`: source for the `hdrctl` command-line tool
-- `build.sh`: builds `hdrctl`
-- `release.sh`: builds and packages a binary release zip
-- `m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
-- `monitor_db.json`: known monitors and their local dimming settings (see [Safety checks](#safety-checks))
-- `my_monitor`: the hash of your monitor, created by you, not in the repo (see [Set up your monitor](#set-up-your-monitor-macos))
+- `mac/hdrctl.m`: source for the `hdrctl` command-line tool
+- `mac/build.sh`: builds `mac/hdrctl`
+- `mac/release.sh`: builds and packages a binary release zip
+- `mac/m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
+- `mac/monitor_db.json`: known monitors and their local dimming settings (see [Safety checks](#safety-checks))
+- `mac/my_monitor`: the hash of your monitor, created by you, not in the repo (see [Set up your monitor](#set-up-your-monitor-macos))
 
 Windows:
 
@@ -99,7 +99,7 @@ Get-ChildItem -Recurse | Unblock-File
 
 ### Set up your monitor (macOS)
 
-Local dimming changes only work after you record your monitor's hash in `my_monitor`, next to `hdrctl`:
+Local dimming changes only work after you record your monitor's hash in `my_monitor`, next to `hdrctl`. Run these in the unzipped release folder, or in `mac/` after building from source:
 
 ```sh
 ./hdrctl identify                                         # prints the identity and hash
@@ -112,9 +112,11 @@ If `hdrctl` is copied to another folder, copy `monitor_db.json` and `my_monitor`
 ### Build from source (macOS)
 
 ```sh
-./build.sh
-# optional: sudo cp hdrctl /usr/local/bin/
+mac/build.sh          # writes mac/hdrctl
+# optional: sudo ln -s "$PWD/mac/hdrctl" /usr/local/bin/hdrctl
 ```
+
+The build writes `mac/hdrctl` next to the source, `monitor_db.json` and `my_monitor`. A symlink keeps it able to find them; a copy needs both files copied with it.
 
 ### Build from source (Windows)
 
@@ -135,7 +137,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ### Make a release
 
 ```sh
-./release.sh 0.1.2    # writes dist/hdrswitch-0.1.2-macos-arm64.zip and its SHA-256
+mac/release.sh 0.1.2    # writes dist/hdrswitch-0.1.2-macos-arm64.zip and its SHA-256
 ```
 
 On Windows:
@@ -154,6 +156,8 @@ redistributable is needed.
 ## Usage
 
 ### macOS
+
+Run these in the unzipped release folder, or in `mac/` in a source checkout.
 
 ```sh
 ./m27p6s-hdr.sh on        # HDR on  + BT.2020    + local dimming Standard

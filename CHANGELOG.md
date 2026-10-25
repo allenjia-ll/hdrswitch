@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The macOS files moved to `mac/`: `mac/hdrctl.m`, `mac/build.sh`, `mac/release.sh`, `mac/m27p6s-hdr.sh` and `mac/monitor_db.json`. The build writes `mac/hdrctl`, and `my_monitor` goes in `mac/`. The release zip layout is unchanged.
+- The README and `build.sh` suggest a symlink instead of copying `hdrctl` to `/usr/local/bin`, since a copy can't find `monitor_db.json` and `my_monitor`.
+
 ## [0.1.4] - 2026-10-24
 
 ### Added

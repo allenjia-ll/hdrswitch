@@ -64,18 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openSettings() {
         closePopup()
         settings.reload()   // always open on the saved settings; closing without Confirm discards edits
-        if settingsWindow == nil {
-            let host = NSHostingView(rootView: SettingsView(model: settings, close: { [weak self] in
-                self?.settingsWindow?.close()
-            }))
-            let w = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize),
-                             styleMask: [.titled, .closable],
-                             backing: .buffered, defer: false)
-            w.title = "HDR Switch Settings"
-            w.contentView = host
-            w.isReleasedWhenClosed = false
-            w.center()
-            settingsWindow = w
+        // A new window each time (unless it's open), sized to the current content.
+        if settingsWindow?.isVisible != true {
+            settingsWindow = makeSettingsWindow(model: settings, close: { [weak self] in self?.settingsWindow?.close() })
         }
         NSApp.activate(ignoringOtherApps: true)   // a menu bar app isn't active by default
         settingsWindow?.makeKeyAndOrderFront(nil)

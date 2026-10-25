@@ -83,6 +83,37 @@ final class SettingsModel: ObservableObject {
     }
 }
 
+// The settings window, styled like the popup: the same translucent background, running under a
+// transparent title bar so the window is one surface. The SwiftUI content sits below the title bar,
+// sized to fit it, so build a new window when the content may have changed (e.g. the "isn't
+// available" note). Frames rather than Auto Layout: with a full-size content view, constraints and
+// the hosting view's own sizing kept adding the title bar again.
+func makeSettingsWindow(model: SettingsModel, close: @escaping () -> Void) -> NSWindow {
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+                     styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+    w.title = "HDR Switch Settings"
+    w.titlebarAppearsTransparent = true
+    w.isMovableByWindowBackground = true
+    w.isReleasedWhenClosed = false
+
+    let background = NSVisualEffectView()
+    background.material = .popover
+    background.blendingMode = .behindWindow
+    background.state = .active
+    w.contentView = background
+    let titleBar = w.frame.height - w.contentLayoutRect.height
+
+    let host = NSHostingView(rootView: SettingsView(model: model, close: close))
+    let size = host.fittingSize
+    if #available(macOS 13.0, *) { host.sizingOptions = [] }   // the window is sized here, not by the host
+    w.setFrame(NSRect(x: 0, y: 0, width: size.width, height: size.height + titleBar), display: false)
+    host.frame = NSRect(origin: .zero, size: size)   // the bottom of the window, below the title bar
+    host.autoresizingMask = [.width, .height]
+    background.addSubview(host)
+    w.center()
+    return w
+}
+
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     let close: () -> Void
@@ -119,7 +150,7 @@ struct SettingsView: View {
         var body: some View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(title)
-                    .font(.headline)
+                    .font(.system(size: 13, weight: .bold))   // like the monitor's name in the popup
                 RuleRow(label: "Set color profile to", rule: $profile, options: model.profiles, title: { $0 })
                 RuleRow(label: "Set local dimming to", rule: $dimming, options: model.levels, title: { $0.capitalized })
                     .disabled(model.levels.isEmpty)

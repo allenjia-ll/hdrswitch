@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8-mac] - 2026-10-25
+
+A macOS-only release. Windows is unchanged since 0.1.7-win and no new Windows binary ships here;
+`hdrctl detect` and `local_monitor_db.json` are macOS-only for now.
+
 ### Added
 
 - macOS: `hdrctl detect` finds a monitor's local dimming VCP code and levels interactively. It asks how many levels the monitor's menu has and their names, scans every VCP code while the user sets each level, picks the code that changes with local dimming (asking if there's more than one), and only writes after the user confirms, setting each level back for them to check on the monitor. It also asks which levels `on` and `off` should use.
@@ -113,7 +118,8 @@ unchanged since 0.1.6 and no new macOS binary ships here.
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.7-win...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.8-mac...HEAD
+[0.1.8-mac]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.7-win...v0.1.8-mac
 [0.1.7-win]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.6...v0.1.7-win
 [0.1.6]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.4...v0.1.6
 [0.1.4]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.3...v0.1.4

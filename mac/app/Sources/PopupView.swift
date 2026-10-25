@@ -159,8 +159,8 @@ struct Dropdown: View {
     }
 }
 
-// Over its area: the pointing-hand cursor while enabled, and `tooltip` after the mouse rests there
-// for a second. A tracking area that's always active, because cursor rects, SwiftUI's hover and the
+// Over its area: the pointing-hand cursor while enabled, and `tooltip` one second after the cursor
+// becomes a hand (never while disabled). A tracking area that's always active, because cursor rects, SwiftUI's hover and the
 // standard tooltip (.help) only work in the active app, and macOS doesn't always let a menu bar app
 // activate. The cursor is set on every mouse move, so other views resetting it don't win. Placed
 // behind a control, it doesn't take its clicks.
@@ -173,6 +173,7 @@ struct HoverArea: NSViewRepresentable {
         var tooltip: String?
         private var inside = false
         private var tooltipTimer: Timer?
+        private var showingHand = false   // the tooltip follows the hand: timer while true, hidden when false
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
@@ -182,40 +183,52 @@ struct HoverArea: NSViewRepresentable {
                                                      .mouseMoved, .cursorUpdate],
                                            owner: self))
         }
-        override func mouseEntered(with event: NSEvent) {
-            inside = true
-            applyCursor()
-            tooltipTimer?.invalidate()
-            tooltipTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
-                guard let self = self, self.inside, let text = self.tooltip else { return }
-                Tooltip.shared.show(text, at: NSEvent.mouseLocation, over: self.window)
-            }
-        }
-        override func mouseMoved(with event: NSEvent) { applyCursor() }
-        override func cursorUpdate(with event: NSEvent) { applyCursor() }
+        override func mouseEntered(with event: NSEvent) { inside = true; update() }
+        override func mouseMoved(with event: NSEvent) { update() }
+        override func cursorUpdate(with event: NSEvent) { update() }
         override func mouseExited(with event: NSEvent) {
             inside = false
             NSCursor.arrow.set()
-            hideTooltip()
+            update()
         }
-        override func viewWillMove(toWindow newWindow: NSWindow?) { if newWindow == nil { hideTooltip() } }
+        override func viewWillMove(toWindow newWindow: NSWindow?) { if newWindow == nil { inside = false; update() } }
 
-        // Only while the mouse is over the area, so model updates elsewhere don't touch the cursor.
-        func applyCursor() { if inside { (enabled ? NSCursor.pointingHand : NSCursor.arrow).set() } }
-
-        func hideTooltip() {
+        // Called on every mouse event over the area and every model change. The cursor is only touched
+        // while the mouse is over the area, so model updates elsewhere don't change it. The tooltip
+        // timer starts when the cursor becomes a hand (mouse moved onto an enabled control, or the
+        // control became enabled under the mouse) and stops, hiding the tooltip, when it stops being one.
+        func update() {
+            let hand = inside && enabled
+            if inside { (hand ? NSCursor.pointingHand : NSCursor.arrow).set() }
+            guard hand != showingHand else { return }
+            showingHand = hand
             tooltipTimer?.invalidate()
             tooltipTimer = nil
-            Tooltip.shared.hide()
+            if hand {
+                // When this comes from a model change (e.g. a refresh finishing) rather than a mouse move,
+                // SwiftUI redraws the now-enabled control and AppKit may reset the cursor afterwards. Set
+                // it again once that has happened, as long as the hand still applies.
+                for delay in [0.0, 0.1] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        if let self = self, self.inside, self.enabled { NSCursor.pointingHand.set() }
+                    }
+                }
+                tooltipTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
+                    guard let self = self, self.showingHand, let text = self.tooltip,
+                          self.window?.isVisible == true else { return }   // not if the popup closed meanwhile
+                    Tooltip.shared.show(text, at: NSEvent.mouseLocation, over: self.window)
+                }
+            } else {
+                Tooltip.shared.hide()
+            }
         }
     }
 
     func makeNSView(context: Context) -> AreaView { AreaView() }
     func updateNSView(_ view: AreaView, context: Context) {
-        if view.enabled != enabled { view.hideTooltip() }   // e.g. a click started switching
         view.enabled = enabled
         view.tooltip = tooltip
-        view.applyCursor()
+        view.update()
     }
 }
 

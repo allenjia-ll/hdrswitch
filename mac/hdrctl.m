@@ -12,6 +12,7 @@
 //   hdrctl ddc dump|get <code>       read monitor settings (DDC/CI VCP codes)
 //   hdrctl ddc set <code> <value>    local dimming level listed in monitor_db.json (the only DDC write allowed)
 //   hdrctl identify [--save]         print the monitor's identity and hash; --save rewrites my_monitor.json
+//   hdrctl detect                    find the monitor's local dimming code and levels (interactive)
 //
 // Options:
 //   --display <text>       part of the display name (default: M27P6S)
@@ -61,6 +62,8 @@ static void usage(int code) {
         "  ddc get <code>        read one VCP code (e.g. 0xF4)\n"
         "  ddc set <code> <value> local dimming level listed in monitor_db.json (the only write allowed)\n"
         "  identify [--save]     print the monitor's identity and hash; --save rewrites my_monitor.json\n"
+        "  detect                find the monitor's local dimming code and levels (interactive), save them\n"
+        "                        to local_monitor_db.json, and optionally contribute them on GitHub\n"
         "\n"
         "A profile <spec> is either a path to an .icc/.icm file or (part of) the\n"
         "profile's name as shown in System Settings > Displays > Color profile.\n");
@@ -101,6 +104,13 @@ static uint8_t localDimming(NSDictionary *entry, NSDictionary<NSString *, NSNumb
     return (uint8_t)code;
 }
 
+// The level hdrctl on (or off) uses: settings.local_dimming.hdr_on / hdr_off if the entry has it
+// (entries from hdrctl detect do), otherwise "standard" / "off".
+static NSString *hdrLevel(NSDictionary *entry, BOOL on) {
+    NSString *name = entry[@"settings"][@"local_dimming"][on ? @"hdr_on" : @"hdr_off"];
+    return [name isKindOfClass:NSString.class] ? name.lowercaseString : on ? @"standard" : @"off";
+}
+
 static uint16_t levelValue(NSDictionary<NSString *, NSNumber *> *levels, NSString *name) {
     NSNumber *v = levels[name];
     if (!v) die(@"monitor_db.json has no local dimming level \"%@\" for this monitor", name);
@@ -120,6 +130,176 @@ static unsigned parseNum(NSString *s) {
     BOOL ok = [s.lowercaseString hasPrefix:@"0x"] ? [sc scanHexInt:&v] : [sc scanInt:(int *)&v];
     if (!ok || !sc.isAtEnd) die(@"not a number: %@", s);
     return v;
+}
+
+// --------------------------------------------------------------- detect --
+// Interactive: the user sets each local dimming level in the monitor's menu, we scan every VCP code
+// at each, find the one code that follows, then (after asking) write each level back for the user
+// to confirm on the monitor. Saved to local_monitor_db.json; my_monitor.json isn't touched.
+
+static NSString *ask(NSString *prompt) {
+    printf("%s", prompt.UTF8String);
+    fflush(stdout);
+    char buf[512];
+    if (!fgets(buf, sizeof buf, stdin)) { printf("\n"); die(@"no input — detection cancelled, nothing was saved"); }
+    return [@(buf) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+static BOOL askYes(NSString *prompt) {
+    NSString *a = ask([prompt stringByAppendingString:@" [y/N] "]).lowercaseString;
+    return [a isEqualToString:@"y"] || [a isEqualToString:@"yes"];
+}
+
+static int askNumber(NSString *prompt, int lo, int hi) {
+    for (;;) {
+        NSString *a = ask(prompt);
+        NSScanner *sc = [NSScanner scannerWithString:a];
+        int n = 0;
+        if ([sc scanInt:&n] && sc.isAtEnd && n >= lo && n <= hi) return n;
+        say(@"Please enter a number from %d to %d.", lo, hi);
+    }
+}
+
+// Picks one of names (by number or name), or the default on Return.
+static NSString *askLevel(NSString *prompt, NSArray<NSString *> *names, NSString *fallback) {
+    for (;;) {
+        NSString *a = ask([NSString stringWithFormat:@"%@ [%@] ", prompt, fallback]).lowercaseString;
+        if (!a.length) return fallback;
+        int n = a.intValue;
+        if (n >= 1 && n <= (int)names.count && [a isEqualToString:@(n).stringValue]) return names[n - 1];
+        if ([names containsObject:a]) return a;
+        say(@"Please enter one of: %@ (or its number).", [names componentsJoinedByString:@", "]);
+    }
+}
+
+static NSString *percentEncode(NSString *s) {
+    NSMutableCharacterSet *ok = [NSMutableCharacterSet alphanumericCharacterSet];
+    [ok addCharactersInString:@"-._~"];
+    return [s stringByAddingPercentEncodingWithAllowedCharacters:ok];
+}
+
+static int detect(NSString *needle) {
+    NSString *err = nil, *why = nil;
+    NSDictionary *attrs = nil;
+    IOAVServiceRef av = findAVService(needle, &attrs);
+    NSDictionary *identity = HCReadIdentityValues(av, attrs, &why);
+    if (!identity) die(@"%@", why);
+    NSString *hash = HCSHA256Hex(HCIdentityJSON(identity));
+    NSDictionary *db = HCLoadDB(&err), *local = db ? HCLoadLocalDB(&err) : nil;
+    if (!local) die(@"%@", err);
+
+    say(@"Monitor: %@  (%@)", identity[@"product_name"], hash);
+    if (local[hash])
+        say(@"It's already in local_monitor_db.json; a new detection replaces that entry.");
+    else if (db[hash])
+        say(@"It's already in the shipped monitor_db.json. The result is saved to local_monitor_db.json\n"
+            "and is used instead of the shipped entry on this Mac.");
+    say(@"\n"
+        "This finds the VCP code your monitor uses for local dimming. It only reads from the monitor\n"
+        "until you confirm the result; then it writes that one code to check each level with you.\n"
+        "Before starting, quit MonitorControl and other DDC apps, and keep the monitor awake.\n");
+
+    int n = askNumber(@"How many local dimming levels does the monitor's menu have? (2-10) ", 2, 10);
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (int i = 0; i < n; i++) {
+        for (;;) {
+            NSString *name = ask([NSString stringWithFormat:@"Name of level %d, as in the monitor's menu (e.g. Off, Low, High): ", i + 1]).lowercaseString;
+            if (!name.length) { say(@"Please enter a name."); continue; }
+            if ([names containsObject:name]) { say(@"\"%@\" is already used.", name); continue; }
+            [names addObject:name];
+            break;
+        }
+    }
+
+    NSMutableArray<NSDictionary *> *scans = [NSMutableArray array];
+    NSDictionary *repeat = nil;
+    void (^progress)(NSUInteger, NSUInteger) = ^(NSUInteger done, NSUInteger total) {
+        printf("\r  reading VCP codes… %lu/%lu", (unsigned long)done, (unsigned long)total);
+        if (done == total) printf("\n");
+        fflush(stdout);
+    };
+    for (int i = 0; i < n; i++) {
+        ask([NSString stringWithFormat:@"\nSet local dimming to \"%@\" in the monitor's menu, close the menu, then press Return. ", names[i]]);
+        HCDDCClearTimeout();
+        if (i == 0) {
+            [scans addObject:HCDDCScan(av, nil, progress)];   // every code, once
+            say(@"  again, to rule out values that change on their own:");
+            repeat = HCDDCScan(av, [scans[0] allKeys], progress);
+        } else {
+            [scans addObject:HCDDCScan(av, [scans[0] allKeys], progress)];
+        }
+        if (HCDDCDidTimeOut()) die(@"the monitor stopped answering over DDC (asleep?) — nothing was saved; run hdrctl detect again");
+    }
+
+    NSArray<NSNumber *> *candidates = HCDimmingCandidates(scans, repeat);
+    if (candidates.count == 0) {
+        say(@"\nNo VCP code changed with local dimming. This monitor may not expose local dimming over DDC/CI,");
+        say(@"or a level was skipped. Nothing was saved.");
+        return 1;
+    }
+    NSNumber *code = candidates[0];
+    if (candidates.count > 1) {
+        say(@"\nMore than one VCP code changed with local dimming:");
+        for (NSUInteger c = 0; c < candidates.count; c++) {
+            NSMutableArray *vals = [NSMutableArray array];
+            for (int i = 0; i < n; i++) [vals addObject:[NSString stringWithFormat:@"%@=%@", names[i], scans[i][candidates[c]][0]]];
+            say(@"  %lu. VCP 0x%02X: %@", (unsigned long)c + 1, candidates[c].unsignedIntValue, [vals componentsJoinedByString:@", "]);
+        }
+        int pick = askNumber([NSString stringWithFormat:@"Which one is local dimming? (1-%lu, 0 to cancel) ", (unsigned long)candidates.count],
+                             0, (int)candidates.count);
+        if (pick == 0) { say(@"Cancelled. Nothing was saved."); return 1; }
+        code = candidates[pick - 1];
+    }
+    uint8_t vcp = code.unsignedCharValue;
+    say(@"\nLocal dimming is VCP 0x%02X (range max %@):", vcp, scans[0][code][1]);
+    for (int i = 0; i < n; i++) say(@"  %-12s %@", names[i].UTF8String, scans[i][code][0]);
+
+    if (!askYes([NSString stringWithFormat:@"\nWrite each level to VCP 0x%02X now, so you can check it on the monitor?", vcp])) {
+        say(@"Nothing was written or saved.");
+        return 1;
+    }
+    for (int i = 0; i < n; i++) {
+        HCSetDimming(av, vcp, [scans[i][code][0] unsignedShortValue], names[i]);
+        if (!askYes([NSString stringWithFormat:@"Does the monitor's menu show local dimming \"%@\" now?", names[i]])) {
+            // Leave it where the user last set it.
+            HCSetDimming(av, vcp, [scans[n - 1][code][0] unsignedShortValue], names[n - 1]);
+            say(@"Not saved: the levels didn't match. Run hdrctl detect again, setting each level exactly as asked.");
+            return 1;
+        }
+    }
+    // The last write was level n, which is where the user left it, so nothing needs restoring.
+
+    say(@"");
+    say(@"Levels: %@", [names componentsJoinedByString:@", "]);
+    NSString *onLevel  = askLevel(@"Which level should HDR on use?", names, [names containsObject:@"standard"] ? @"standard" : names.lastObject);
+    NSString *offLevel = askLevel(@"Which level should HDR off use?", names, [names containsObject:@"off"] ? @"off" : names.firstObject);
+
+    say(@"\nOptional details for the monitor database (press Return to skip):");
+    NSString *firmware = ask(@"  Firmware version shown in the monitor's menu: ");
+    NSString *connection = ask(@"  Connection (e.g. USB-C, DisplayPort, HDMI): ");
+    NSMutableDictionary *report = [@{ @"tool": @"hdrctl detect",
+                                      @"os": NSProcessInfo.processInfo.operatingSystemVersionString,
+                                      @"verified_by_user": @YES,
+                                      @"detected": [[NSISO8601DateFormatter new] stringFromDate:[NSDate date]] } mutableCopy];
+    if (firmware.length) report[@"osd_firmware"] = firmware;
+    if (connection.length) report[@"connection"] = connection;
+
+    NSMutableArray *levels = [NSMutableArray array];
+    for (int i = 0; i < n; i++) [levels addObject:@{ @"name": names[i], @"value": scans[i][code][0] }];
+    NSDictionary *entry = HCSaveLocalMonitor(identity, vcp, levels, onLevel, offLevel, report, &err);
+    if (!entry) die(@"%@", err);
+    NSString *json = HCPrettyJSON(@{ hash: entry });
+    say(@"\nSaved to %@:\n%@", HCLocalDBPath(), json);
+
+    if (askYes(@"\nContribute this monitor to HDR Switch? This opens a pre-filled GitHub issue in your browser (you can review it before submitting).")) {
+        NSString *title = [NSString stringWithFormat:@"Monitor: %@ (%@)", identity[@"product_name"], identity[@"manufacturer"]];
+        NSString *body = [NSString stringWithFormat:@"Detected with `hdrctl detect`. Entry for `monitor_db.json`:\n\n```json\n%@\n```\n", json];
+        NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://github.com/allenjia-ll/hdrswitch/issues/new?title=%@&body=%@",
+                                           percentEncode(title), percentEncode(body)]];
+        if (![[NSWorkspace sharedWorkspace] openURL:url]) say(@"Couldn't open a browser. Open this link instead:\n%@", url.absoluteString);
+        else say(@"Opened GitHub in your browser. If it didn't appear, use this link:\n%@", url.absoluteString);
+    }
+    return 0;
 }
 
 // ------------------------------------------------------------------- main --
@@ -179,6 +359,8 @@ int main(int argc, const char *argv[]) {
             return 0;
         }
 
+        if ([cmd isEqualToString:@"detect"]) return detect(needle);
+
         if ([cmd isEqualToString:@"identify"]) {
             NSDictionary *attrs = nil;
             IOAVServiceRef av = HCFindAVService(needle, &attrs, &err);
@@ -197,7 +379,10 @@ int main(int argc, const char *argv[]) {
             say(@"Hash:            %@", hash);
             NSDictionary *db = HCLoadDB(&err);
             if (!db) die(@"%@", err);
-            say(@"monitor_db.json: %@", db[hash] ? @"listed" : @"not listed");
+            NSDictionary *local = HCLoadLocalDB(&err);
+            if (!local) die(@"%@", err);
+            say(@"monitor_db.json: %@", local[hash] ? @"listed (local_monitor_db.json, from hdrctl detect)"
+                                        : db[hash] ? @"listed" : @"not listed (to add it: hdrctl detect)");
             say(@"my_monitor.json: %@", !mine ? mineWhy : [mine isEqualToString:hash] ? @"matches" : @"different monitor");
             return 0;
         }
@@ -235,22 +420,26 @@ int main(int argc, const char *argv[]) {
             NSDictionary *attrs = nil;
             IOAVServiceRef av = findAVService(needle, &attrs);
             NSDictionary<NSString *, NSNumber *> *levels = nil;
-            uint8_t code = localDimming(requireMonitor(av, attrs), &levels);
-            uint16_t level = levelValue(levels, @"standard");
+            NSDictionary *entry = requireMonitor(av, attrs);
+            uint8_t code = localDimming(entry, &levels);
+            NSString *levelName = hdrLevel(entry, YES);
+            uint16_t level = levelValue(levels, levelName);
             if (!HCSetHDR(d, YES, &err)) die(@"%@", err);
             if (!HCSetProfile(d, p, &err)) die(@"%@", err);
-            HCSetDimming(av, code, level, @"standard");
+            HCSetDimming(av, code, level, levelName);
             say(@"Done: %@ — HDR on", name);
         } else if ([cmd isEqualToString:@"off"] || [cmd isEqualToString:@"toggle"]) {
             NSURL *p = resolveProfile(sdrSpec);
             NSDictionary *attrs = nil;
             IOAVServiceRef av = findAVService(needle, &attrs);
             NSDictionary<NSString *, NSNumber *> *levels = nil;
-            uint8_t code = localDimming(requireMonitor(av, attrs), &levels);
-            uint16_t level = levelValue(levels, @"off");
+            NSDictionary *entry = requireMonitor(av, attrs);
+            uint8_t code = localDimming(entry, &levels);
+            NSString *levelName = hdrLevel(entry, NO);
+            uint16_t level = levelValue(levels, levelName);
             if (!HCSetHDR(d, NO, &err)) die(@"%@", err);
             if (!HCSetProfile(d, p, &err)) die(@"%@", err);
-            HCSetDimming(av, code, level, @"off");
+            HCSetDimming(av, code, level, levelName);
             say(@"Done: %@ — HDR off", name);
         } else if ([cmd isEqualToString:@"hdr"] && args.count == 2) {
             NSString *v = args[1].lowercaseString;

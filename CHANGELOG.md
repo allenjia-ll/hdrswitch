@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- macOS: `hdrctl detect` finds a monitor's local dimming VCP code and levels interactively. It asks how many levels the monitor's menu has and their names, scans every VCP code while the user sets each level, picks the code that changes with local dimming (asking if there's more than one), and only writes after the user confirms, setting each level back for them to check on the monitor. It also asks which levels `on` and `off` should use.
+- `local_monitor_db.json`: monitors found with `hdrctl detect`, saved next to `hdrctl` with an optional `report` section (firmware shown in the monitor's menu, connection, OS). The core reads it together with `monitor_db.json`, and its entries override the shipped ones. `my_monitor.json` isn't changed. `hdrctl detect` offers to open a pre-filled GitHub issue with the entry so it can be added to `monitor_db.json`.
+- `monitor_db.json` entries can set `settings.local_dimming.hdr_on` / `hdr_off`, the levels `on` and `off` use; without them, `on` and `off` use `standard` and `off` as before.
+
+### Changed
+
+- macOS: every DDC call gives up after 3 seconds (tracked per DDC connection), so a sleeping monitor no longer makes `hdrctl` hang. It prints `warning: the monitor didn't answer over DDC within 3 seconds (asleep?)` and fails as if the monitor gave no reply.
+
 ## [0.1.7-win] - 2026-10-25
 
 A Windows-only release. The last Windows binary was 0.1.3, so this is the first

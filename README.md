@@ -28,6 +28,16 @@ hdrctl --display "<part of display name>" profile "Rec. ITU-R BT.2020-1"
 
 Run `hdrctl list` to see display names.
 
+### Add your monitor (macOS)
+
+If your monitor has local dimming that you can change in its own menu, `hdrctl detect` can find out how to control it over DDC/CI:
+
+```sh
+hdrctl --display "<part of display name>" detect
+```
+
+It asks how many local dimming levels the monitor's menu has and what they're called, then asks you to set each one in the menu while it reads every VCP code (about a minute for the first level, less for the rest). The code that changes with local dimming, and only that code, is the one it uses. Until then it only reads. After you confirm, it writes each level back so you can check it on the monitor, then asks which levels `on` and `off` should use. The result is saved to `local_monitor_db.json` next to `hdrctl` (it overrides the shipped `monitor_db.json` entry for the same monitor), and it offers to open a pre-filled GitHub issue so the monitor can be added for everyone. `my_monitor.json` isn't changed. Quit MonitorControl and other DDC apps first, and keep the monitor awake.
+
 On Windows the same applies, except that there is no `profile` command yet, so only the HDR step is available for other monitors:
 
 ```powershell
@@ -56,6 +66,7 @@ Windows:
 Both:
 
 - `monitor_db.json`: known monitors and their local dimming settings (see [Safety checks](#safety-checks)). The build scripts copy it next to `mac/hdrctl` and `win/hdrctl.exe`; edit the one at the root.
+- `local_monitor_db.json`: monitors detected on this computer with `hdrctl detect` (macOS), next to `hdrctl`; not in the repo
 - `CHANGELOG.md`: release history
 - `LICENSE`: MIT
 
@@ -254,6 +265,7 @@ hdrctl ddc dump                  read all monitor settings (DDC/CI VCP codes)
 hdrctl ddc get <code>            read one VCP code, e.g. 0xF4
 hdrctl ddc set <code> <value>    local dimming level listed in monitor_db.json (the only DDC write allowed)
 hdrctl identify                  print the monitor's identity and hash
+hdrctl detect                    find the monitor's local dimming code and levels (macOS, interactive)
 
 Options:
   --display <text>       part of the display name        (default: M27P6S)

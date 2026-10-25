@@ -10,7 +10,7 @@ fi
 
 clang -fobjc-arc -O2 -Wall -mmacosx-version-min=12.0 \
   -framework AppKit -framework ApplicationServices -framework IOKit \
-  hdrctl.m -o hdrctl
+  hdrctl.m core/hdrcore.m -o hdrctl
 
 # hdrctl reads monitor_db.json from its own folder; the repo keeps one copy at the root.
 cp ../monitor_db.json monitor_db.json

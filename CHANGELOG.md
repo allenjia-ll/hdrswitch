@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- macOS: the HDR, color profile, DDC/CI and monitor DB code moved from `mac/hdrctl.m` into `mac/core/hdrcore.m`, which returns errors instead of exiting, so a menu bar app can share it. The CLI's output and exit codes are unchanged, except that a DDC write that fails three times in a row no longer exits: during a read it counts as no reply, and during a set the read-back loop retries it.
 - `monitor_db.json` moved to the repo root and is shared by both builds. `mac/build.sh` and `win/build.ps1` copy it next to the binary (the copies are gitignored), and both release scripts include it in the zip.
 - The macOS files moved to `mac/`: `mac/hdrctl.m`, `mac/build.sh`, `mac/release.sh`, `mac/m27p6s-hdr.sh` and `mac/monitor_db.json`. The build writes `mac/hdrctl`, and `my_monitor` goes in `mac/`. The release zip layout is unchanged.
 - The README and `build.sh` suggest a symlink instead of copying `hdrctl` to `/usr/local/bin`, since a copy can't find `monitor_db.json` and `my_monitor`.

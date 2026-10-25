@@ -1,0 +1,396 @@
+// hdrcore — see hdrcore.h.
+
+#import "hdrcore.h"
+#include <CommonCrypto/CommonDigest.h>
+#include <dlfcn.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+// ------------------------------------------------------------------ logging --
+
+static void (^gLogger)(HCLogLevel, NSString *);
+
+void HCSetLogger(void (^logger)(HCLogLevel level, NSString *message)) { gLogger = logger; }
+
+static void logAt(HCLogLevel level, NSString *fmt, va_list ap) NS_FORMAT_FUNCTION(2, 0);
+static void logAt(HCLogLevel level, NSString *fmt, va_list ap) {
+    if (gLogger) gLogger(level, [[NSString alloc] initWithFormat:fmt arguments:ap]);
+}
+
+static void logInfo(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
+static void logInfo(NSString *fmt, ...) { va_list ap; va_start(ap, fmt); logAt(HCLogInfo, fmt, ap); va_end(ap); }
+
+static void logWarn(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
+static void logWarn(NSString *fmt, ...) { va_list ap; va_start(ap, fmt); logAt(HCLogWarning, fmt, ap); va_end(ap); }
+
+// Sets *error and returns NO.
+static BOOL fail(NSString **error, NSString *fmt, ...) NS_FORMAT_FUNCTION(2, 3);
+static BOOL fail(NSString **error, NSString *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    if (error) *error = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    return NO;
+}
+
+// -------------------------------------------------------------- data files --
+
+static NSString *gDataDir;
+
+void HCSetDataDirectory(NSString *dir) { gDataDir = dir; }
+
+NSString *HCDataDirectory(void) {
+    if (gDataDir) return gDataDir;
+    char exe[PATH_MAX], real[PATH_MAX];
+    uint32_t size = sizeof exe;
+    if (_NSGetExecutablePath(exe, &size) != 0 || !realpath(exe, real)) return nil;
+    return @(real).stringByDeletingLastPathComponent;
+}
+
+static NSString *dataPath(NSString *name) { return [HCDataDirectory() stringByAppendingPathComponent:name]; }
+
+// --------------------------------------------------------------- SkyLight --
+
+typedef int  (*SLSSetHDRFn)(CGDirectDisplayID display, bool enabled, int reserved1, int reserved2);
+typedef bool (*SLSDisplayBoolFn)(CGDirectDisplayID display);
+
+static SLSSetHDRFn      SLSSetHDR;
+static SLSDisplayBoolFn SLSIsHDR;
+static SLSDisplayBoolFn SLSSupportsHDR;
+
+BOOL HCLoadSkyLight(NSString **error) {
+    void *h = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY);
+    if (!h) return fail(error, @"cannot load SkyLight framework: %s", dlerror());
+    SLSSetHDR      = (SLSSetHDRFn)dlsym(h, "SLSDisplaySetHDRModeEnabled");
+    SLSIsHDR       = (SLSDisplayBoolFn)dlsym(h, "SLSDisplayIsHDRModeEnabled");
+    SLSSupportsHDR = (SLSDisplayBoolFn)dlsym(h, "SLSDisplaySupportsHDRMode");
+    if (!SLSSetHDR || !SLSIsHDR || !SLSSupportsHDR)
+        return fail(error, @"this macOS version doesn't expose the expected SkyLight HDR functions");
+    return YES;
+}
+
+BOOL HCSupportsHDR(CGDirectDisplayID d) { return SLSSupportsHDR(d); }
+BOOL HCIsHDR(CGDirectDisplayID d)       { return SLSIsHDR(d); }
+
+BOOL HCSetHDR(CGDirectDisplayID d, BOOL on, NSString **error) {
+    if (!SLSSupportsHDR(d))
+        logWarn(@"macOS doesn't report HDR support for this display in its current mode; trying anyway");
+    if ((BOOL)SLSIsHDR(d) == on) { logInfo(@"HDR already %@", on ? @"on" : @"off"); return YES; }
+
+    logInfo(@"Turning HDR %@…", on ? @"on" : @"off");
+    int err = SLSSetHDR(d, on, 0, 0);
+    if (err != 0) return fail(error, @"SLSDisplaySetHDRModeEnabled returned %d", err);
+
+    for (int i = 0; i < 40 && (BOOL)SLSIsHDR(d) != on; i++) usleep(250000);   // up to 10 s
+    if ((BOOL)SLSIsHDR(d) != on) return fail(error, @"HDR did not switch %@ within 10 seconds", on ? @"on" : @"off");
+    sleep(2);   // let the monitor and WindowServer settle before changing the profile
+    return YES;
+}
+
+// --------------------------------------------------------------- displays --
+
+NSArray<NSDictionary *> *HCAllDisplays(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSScreen *s in [NSScreen screens]) {
+        NSNumber *n = s.deviceDescription[@"NSScreenNumber"];
+        if (!n) continue;
+        [out addObject:@{ @"id": n, @"name": s.localizedName ?: @"(unknown)" }];
+    }
+    return out;
+}
+
+CGDirectDisplayID HCFindDisplay(NSString *needle, NSString **outName, NSString **error) {
+    NSMutableArray<NSDictionary *> *hits = [NSMutableArray array];
+    for (NSDictionary *d in HCAllDisplays())
+        if ([d[@"name"] rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound)
+            [hits addObject:d];
+    if (hits.count == 0) {
+        fail(error, @"no connected display matches \"%@\" — is it connected to this Mac? (run: hdrctl list)", needle);
+        return 0;
+    }
+    if (hits.count > 1) {
+        fail(error, @"%lu displays match \"%@\" — use a more specific --display", (unsigned long)hits.count, needle);
+        return 0;
+    }
+    if (outName) *outName = hits[0][@"name"];
+    return [hits[0][@"id"] unsignedIntValue];
+}
+
+// --------------------------------------------------------------- profiles --
+
+static NSString *profileDescription(ColorSyncProfileRef p) {
+    if (!p) return nil;
+    CFStringRef d = ColorSyncProfileCopyDescriptionString(p);
+    return d ? CFBridgingRelease(d) : nil;
+}
+
+NSString *HCCurrentProfile(CGDirectDisplayID d) {
+    ColorSyncProfileRef p = ColorSyncProfileCreateWithDisplayID(d);
+    NSString *s = profileDescription(p);
+    if (p) CFRelease(p);
+    return s ?: @"(unknown)";
+}
+
+// Search order: ~/Library, /Library, /System/Library ColorSync profile folders.
+NSURL *HCResolveProfile(NSString *spec, NSString **error) {
+    NSString *lower = spec.lowercaseString;
+    if ([spec hasPrefix:@"/"] || [spec hasPrefix:@"~"] ||
+        [lower hasSuffix:@".icc"] || [lower hasSuffix:@".icm"]) {
+        NSString *path = spec.stringByExpandingTildeInPath;
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path])
+            { fail(error, @"profile file not found: %@", path); return nil; }
+        return [NSURL fileURLWithPath:path];
+    }
+
+    NSArray *dirs = @[ [@"~/Library/ColorSync/Profiles" stringByExpandingTildeInPath],
+                       @"/Library/ColorSync/Profiles",
+                       @"/System/Library/ColorSync/Profiles" ];
+    NSURL *partial = nil;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *dir in dirs) {
+        NSDirectoryEnumerator *e = [fm enumeratorAtURL:[NSURL fileURLWithPath:dir isDirectory:YES]
+                            includingPropertiesForKeys:nil
+                                               options:NSDirectoryEnumerationSkipsHiddenFiles
+                                          errorHandler:nil];
+        for (NSURL *url in e) {
+            NSString *ext = url.pathExtension.lowercaseString;
+            if (![ext isEqualToString:@"icc"] && ![ext isEqualToString:@"icm"]) continue;
+            ColorSyncProfileRef p = ColorSyncProfileCreateWithURL((__bridge CFURLRef)url, NULL);
+            NSString *desc = profileDescription(p);
+            if (p) CFRelease(p);
+            if (!desc) continue;
+            if ([desc caseInsensitiveCompare:spec] == NSOrderedSame) return url;
+            if (!partial && [desc rangeOfString:spec options:NSCaseInsensitiveSearch].location != NSNotFound)
+                partial = url;
+        }
+    }
+    if (!partial) { fail(error, @"no installed color profile named like \"%@\"", spec); return nil; }
+    return partial;
+}
+
+BOOL HCSetProfile(CGDirectDisplayID d, NSURL *url, NSString **error) {
+    CFUUIDRef uuid = CGDisplayCreateUUIDFromDisplayID(d);
+    if (!uuid) return fail(error, @"cannot get the display's ColorSync UUID");
+    NSDictionary *info = @{
+        (__bridge NSString *)kColorSyncDeviceDefaultProfileID: url,
+        (__bridge NSString *)kColorSyncProfileUserScope: (__bridge NSString *)kCFPreferencesCurrentUser,
+    };
+    bool ok = ColorSyncDeviceSetCustomProfiles(kColorSyncDisplayDeviceClass, uuid,
+                                               (__bridge CFDictionaryRef)info);
+    CFRelease(uuid);
+    if (!ok) return fail(error, @"ColorSync refused profile %@", url.path);
+
+    // Confirm (ColorSync applies asynchronously; give it a moment).
+    ColorSyncProfileRef p = ColorSyncProfileCreateWithURL((__bridge CFURLRef)url, NULL);
+    NSString *want = profileDescription(p);
+    if (p) CFRelease(p);
+    for (int i = 0; i < 20 && want && ![HCCurrentProfile(d) isEqualToString:want]; i++) usleep(100000);
+    logInfo(@"Color profile: %@", HCCurrentProfile(d));
+    return YES;
+}
+
+// -------------------------------------------------------------------- DDC --
+// Monitor settings (VCP codes) over DDC/CI, via IOAVService (Apple Silicon, IOKit private API).
+
+extern IOAVServiceRef IOAVServiceCreateWithService(CFAllocatorRef allocator, io_service_t service);
+extern IOReturn IOAVServiceReadI2C(IOAVServiceRef service, uint32_t chipAddress, uint32_t offset,
+                                   void *buf, uint32_t len);
+extern IOReturn IOAVServiceWriteI2C(IOAVServiceRef service, uint32_t chipAddress, uint32_t dataAddress,
+                                    void *buf, uint32_t len);
+
+// Walk the IOService plane: each external DCPAVServiceProxy belongs to the framebuffer seen before it.
+IOAVServiceRef HCFindAVService(NSString *needle, NSDictionary **outAttrs, NSString **error) {
+    io_iterator_t it;
+    if (IORegistryCreateIterator(kIOMainPortDefault, kIOServicePlane, kIORegistryIterateRecursively, &it) != KERN_SUCCESS)
+        { fail(error, @"cannot iterate the IO registry"); return NULL; }
+    IOAVServiceRef found = NULL;
+    NSDictionary *lastAttrs = nil;
+    io_service_t s;
+    while (!found && (s = IOIteratorNext(it))) {
+        io_name_t cls;
+        IOObjectGetClass(s, cls);
+        if (!strcmp(cls, "IOMobileFramebufferShim") || !strcmp(cls, "AppleCLCD2")) {
+            NSDictionary *attrs = CFBridgingRelease(IORegistryEntryCreateCFProperty(s, CFSTR("DisplayAttributes"), kCFAllocatorDefault, 0));
+            if (attrs[@"ProductAttributes"][@"ProductName"]) lastAttrs = attrs[@"ProductAttributes"];
+        } else if (!strcmp(cls, "DCPAVServiceProxy")) {
+            NSString *loc = CFBridgingRelease(IORegistryEntryCreateCFProperty(s, CFSTR("Location"), kCFAllocatorDefault, 0));
+            if ([loc isEqualToString:@"External"] && lastAttrs &&
+                [lastAttrs[@"ProductName"] rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound)
+                found = IOAVServiceCreateWithService(kCFAllocatorDefault, s);
+        }
+        IOObjectRelease(s);
+    }
+    IOObjectRelease(it);
+    if (!found) { fail(error, @"no DDC connection to a display matching \"%@\"", needle); return NULL; }
+    if (outAttrs) *outAttrs = lastAttrs;
+    return found;
+}
+
+// Returns NO if the write didn't go through after 3 tries (the bus is flaky).
+static BOOL ddcWrite(IOAVServiceRef av, uint8_t *pkt, uint32_t len) {
+    uint8_t chk = 0x6E ^ 0x51;
+    for (uint32_t i = 0; i < len - 1; i++) chk ^= pkt[i];
+    pkt[len - 1] = chk;
+    IOReturn err = kIOReturnError;
+    for (int i = 0; i < 3 && err != kIOReturnSuccess; i++) {
+        usleep(10000);
+        err = IOAVServiceWriteI2C(av, 0x37, 0x51, pkt, len);
+    }
+    return err == kIOReturnSuccess;
+}
+
+// One read. Returns 1 = value, 0 = monitor says unsupported, -1 = no valid reply.
+static int ddcGetOnce(IOAVServiceRef av, uint8_t code, uint16_t *cur, uint16_t *max) {
+    uint8_t req[4] = { 0x82, 0x01, code, 0 };
+    if (!ddcWrite(av, req, sizeof req)) return -1;
+    usleep(50000);
+    uint8_t r[11] = { 0 };
+    if (IOAVServiceReadI2C(av, 0x37, 0x51, r, sizeof r) != kIOReturnSuccess) return -1;
+    // reply: 6E 88 02 <result> <code> <type> <maxH> <maxL> <curH> <curL> <chk>
+    uint8_t chk = 0x50;
+    for (int i = 0; i < 10; i++) chk ^= r[i];
+    if (chk != r[10] || r[1] != 0x88 || r[2] != 0x02 || r[4] != code) return -1;
+    if (r[3] != 0) return 0;
+    *max = r[6] << 8 | r[7];
+    *cur = r[8] << 8 | r[9];
+    return 1;
+}
+
+// Needs two identical replies in a row, since other DDC apps (e.g. MonitorControl) can garble the bus.
+BOOL HCDDCGet(IOAVServiceRef av, uint8_t code, uint16_t *cur, uint16_t *max) {
+    int prev = -1; uint16_t pc = 0, pm = 0;
+    for (int attempt = 0; attempt < 6; attempt++) {
+        uint16_t c = 0, m = 0;
+        int got = ddcGetOnce(av, code, &c, &m);
+        if (got < 0) { prev = -1; continue; }
+        if (got == prev && c == pc && m == pm) {
+            if (got && cur) *cur = c;
+            if (got && max) *max = m;
+            return got == 1;
+        }
+        prev = got; pc = c; pm = m;
+    }
+    return NO;
+}
+
+static BOOL ddcSet(IOAVServiceRef av, uint8_t code, uint16_t value) {
+    uint8_t pkt[6] = { 0x84, 0x03, code, value >> 8, value & 0xFF, 0 };
+    return ddcWrite(av, pkt, sizeof pkt);
+}
+
+// -------------------------------------------------------------- monitor DB --
+
+static NSString *jsonString(NSString *s) {
+    NSData *d = [NSJSONSerialization dataWithJSONObject:s
+                    options:NSJSONWritingFragmentsAllowed | NSJSONWritingWithoutEscapingSlashes error:NULL];
+    return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+}
+
+NSString *HCReadIdentity(IOAVServiceRef av, NSDictionary *attrs, NSString **why) {
+    NSString *mfr = attrs[@"ManufacturerID"], *product = attrs[@"ProductName"];
+    NSNumber *pid = attrs[@"ProductID"];
+    if (![mfr isKindOfClass:NSString.class] || ![product isKindOfClass:NSString.class] ||
+        ![pid isKindOfClass:NSNumber.class]) { *why = @"EDID manufacturer, product ID or name not available"; return nil; }
+
+    struct { uint8_t code; BOOL useMax; const char *what; } vcp[] = {
+        { 0xC8, NO,  "display controller ID (VCP 0xC8)" },
+        { 0xC9, NO,  "firmware version (VCP 0xC9)" },
+        { 0xF4, YES, "local dimming range max (VCP 0xF4)" },
+    };
+    unsigned got[3];
+    for (size_t i = 0; i < 3; i++) {
+        uint16_t cur = 0, max = 0;
+        BOOL ok = NO;
+        for (int t = 0; t < 10 && !ok; t++) {   // bus is flaky and failures come in bursts
+            if (t) usleep(300000);
+            ok = HCDDCGet(av, vcp[i].code, &cur, &max);
+        }
+        if (!ok) { *why = [NSString stringWithFormat:@"%s: no reply (DDC busy? quit MonitorControl and retry)", vcp[i].what]; return nil; }
+        got[i] = vcp[i].useMax ? max : cur;
+    }
+    return [NSString stringWithFormat:@"{\"manufacturer\":%@,\"product_id\":%lld,\"product_name\":%@,"
+                                       "\"display_controller_id\":%u,\"firmware_version\":%u,\"local_dimming_range_max\":%u}",
+            jsonString(mfr), pid.longLongValue, jsonString(product), got[0], got[1], got[2]];
+}
+
+NSString *HCSHA256Hex(NSString *s) {
+    NSData *d = [s dataUsingEncoding:NSUTF8StringEncoding];
+    unsigned char h[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(d.bytes, (CC_LONG)d.length, h);
+    NSMutableString *hex = [NSMutableString string];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [hex appendFormat:@"%02x", h[i]];
+    return hex;
+}
+
+NSDictionary *HCLoadDB(NSString **error) {
+    NSString *path = dataPath(@"monitor_db.json");
+    NSData *d = path ? [NSData dataWithContentsOfFile:path] : nil;
+    if (!d) return @{};
+    NSError *err = nil;
+    id db = [NSJSONSerialization JSONObjectWithData:d options:0 error:&err];
+    if (![db isKindOfClass:NSDictionary.class])
+        { fail(error, @"%@ isn't a valid JSON object: %@", path, err.localizedDescription ?: @""); return nil; }
+    return db;
+}
+
+NSString *HCReadMyMonitor(void) {
+    NSString *path = dataPath(@"my_monitor");
+    NSString *s = path ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL] : nil;
+    return [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString **why, NSString **error) {
+    NSString *identity = HCReadIdentity(av, attrs, why);
+    if (!identity) return nil;
+    NSString *hash = HCSHA256Hex(identity), *mine = HCReadMyMonitor();
+    if (!mine.length) { *why = @"my_monitor not found next to hdrctl (see hdrctl identify)"; return nil; }
+    if (![hash isEqualToString:mine]) { *why = [NSString stringWithFormat:@"connected monitor is %@, my_monitor is %@", hash, mine]; return nil; }
+    NSDictionary *db = HCLoadDB(error);
+    if (!db) return nil;
+    NSDictionary *entry = db[hash];
+    if (![entry isKindOfClass:NSDictionary.class]) { *why = [NSString stringWithFormat:@"%@ isn't in monitor_db.json", hash]; return nil; }
+    return entry;
+}
+
+int HCLocalDimming(NSDictionary *entry, NSDictionary<NSString *, NSNumber *> **levels, NSString **error) {
+    NSDictionary *ld = entry[@"settings"][@"local_dimming"];
+    NSString *vcp = [ld isKindOfClass:NSDictionary.class] ? ld[@"vcp"] : nil;
+    NSArray *list = [ld isKindOfClass:NSDictionary.class] ? ld[@"levels"] : nil;
+    unsigned code = 0;
+    if (![vcp isKindOfClass:NSString.class] || ![[NSScanner scannerWithString:vcp] scanHexInt:&code] ||
+        code > 0xFF || ![list isKindOfClass:NSArray.class]) {
+        fail(error, @"monitor_db.json: settings.local_dimming needs \"vcp\" (e.g. \"0xF4\") and \"levels\"");
+        return -1;
+    }
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    for (NSDictionary *l in list) {
+        if (![l isKindOfClass:NSDictionary.class] || ![l[@"name"] isKindOfClass:NSString.class] ||
+            ![l[@"value"] isKindOfClass:NSNumber.class]) {
+            fail(error, @"monitor_db.json: each local dimming level needs \"name\" and \"value\"");
+            return -1;
+        }
+        out[[l[@"name"] lowercaseString]] = l[@"value"];
+    }
+    *levels = out;
+    return (int)code;
+}
+
+NSString *HCLevelName(NSDictionary<NSString *, NSNumber *> *levels, uint16_t value) {
+    for (NSString *n in levels) if (levels[n].unsignedShortValue == value) return n;
+    return nil;
+}
+
+BOOL HCSetDimming(IOAVServiceRef av, uint8_t code, uint16_t value, NSString *label) {
+    uint16_t cur = 0xFFFF;
+    // Skip the write (and the monitor's settings-memory wear) if it's already set; reads don't wear it.
+    if (HCDDCGet(av, code, &cur, NULL) && cur == value) { logInfo(@"Local dimming already %@", label); return YES; }
+    // The monitor silently drops writes while busy (e.g. right after an HDR switch): write, verify, repeat.
+    for (int i = 0; i < 10; i++) {
+        ddcSet(av, code, value);
+        sleep(1);
+        if (HCDDCGet(av, code, &cur, NULL) && cur == value) { logInfo(@"Local dimming: %@", label); return YES; }
+    }
+    logWarn(@"couldn't confirm local dimming is %@ (DDC busy? quit MonitorControl and retry)", label);
+    return NO;
+}

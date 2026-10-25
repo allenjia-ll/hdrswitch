@@ -38,7 +38,8 @@ hdrctl.exe --display "<part of display name>" hdr on
 
 macOS:
 
-- `mac/hdrctl.m`: source for the `hdrctl` command-line tool
+- `mac/hdrctl.m`: the `hdrctl` command line (arguments, output, exit codes)
+- `mac/core/hdrcore.h`, `mac/core/hdrcore.m`: HDR, color profile, DDC/CI and monitor DB code, shared with the planned menu bar app
 - `mac/build.sh`: builds `mac/hdrctl`
 - `mac/release.sh`: builds and packages a binary release zip
 - `mac/m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults

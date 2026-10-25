@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Windows: the same monitor lookup as macOS. Before any DDC write, `hdrctl.exe` reads the monitor's six identity values, hashes them with SHA-256 (BCrypt), and requires a match with `win/my_monitor` and an entry in `monitor_db.json`; otherwise `on`, `off`, `toggle` and `ddc set` print `monitor unknown` and stop. The local dimming code and levels come from the database, replacing the hard-coded checks. The hash is the same as on macOS.
+- Windows: `hdrctl.exe identify`, and a small JSON parser for `monitor_db.json` (no new dependencies).
+
 ### Changed
 
+- `monitor_db.json` moved to the repo root and is shared by both builds. `mac/build.sh` and `win/build.ps1` copy it next to the binary (the copies are gitignored), and both release scripts include it in the zip.
 - The macOS files moved to `mac/`: `mac/hdrctl.m`, `mac/build.sh`, `mac/release.sh`, `mac/m27p6s-hdr.sh` and `mac/monitor_db.json`. The build writes `mac/hdrctl`, and `my_monitor` goes in `mac/`. The release zip layout is unchanged.
 - The README and `build.sh` suggest a symlink instead of copying `hdrctl` to `/usr/local/bin`, since a copy can't find `monitor_db.json` and `my_monitor`.
 

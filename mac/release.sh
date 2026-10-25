@@ -22,7 +22,7 @@ minos="$(otool -l hdrctl | awk '/LC_BUILD_VERSION/ {f=1} f && $1=="minos" {print
 
 rm -rf "$STAGE" "$DIST/$NAME.zip"
 mkdir -p "$STAGE"
-cp hdrctl m27p6s-hdr.sh monitor_db.json "$ROOT/README.md" "$ROOT/CHANGELOG.md" "$ROOT/LICENSE" "$STAGE/"
+cp hdrctl m27p6s-hdr.sh "$ROOT/monitor_db.json" "$ROOT/README.md" "$ROOT/CHANGELOG.md" "$ROOT/LICENSE" "$STAGE/"
 chmod 755 "$STAGE/hdrctl" "$STAGE/m27p6s-hdr.sh"
 
 # ditto keeps permissions and the code signature; --norsrc leaves out macOS metadata.

@@ -160,6 +160,7 @@ New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 Copy-Item $exe                                   $stage
 Copy-Item (Join-Path $winDir   'm27p6s-hdr.ps1') $stage
+Copy-Item (Join-Path $repoRoot 'monitor_db.json') $stage
 Copy-Item (Join-Path $repoRoot 'README.md')      $stage
 Copy-Item (Join-Path $repoRoot 'CHANGELOG.md')   $stage
 Copy-Item (Join-Path $repoRoot 'LICENSE')        $stage

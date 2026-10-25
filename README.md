@@ -42,7 +42,6 @@ macOS:
 - `mac/build.sh`: builds `mac/hdrctl`
 - `mac/release.sh`: builds and packages a binary release zip
 - `mac/m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
-- `mac/monitor_db.json`: known monitors and their local dimming settings (see [Safety checks](#safety-checks))
 - `mac/my_monitor`: the hash of your monitor, created by you, not in the repo (see [Set up your monitor](#set-up-your-monitor-macos))
 
 Windows:
@@ -51,9 +50,11 @@ Windows:
 - `win/build.ps1`: builds `win/hdrctl.exe`
 - `win/release.ps1`: builds and packages a binary release zip
 - `win/m27p6s-hdr.ps1`: wrapper that calls `hdrctl.exe` with the M27P6S defaults
+- `win/my_monitor`: the hash of your monitor, created by you, not in the repo (see [Set up your monitor](#set-up-your-monitor-windows))
 
 Both:
 
+- `monitor_db.json`: known monitors and their local dimming settings (see [Safety checks](#safety-checks)). The build scripts copy it next to `mac/hdrctl` and `win/hdrctl.exe`; edit the one at the root.
 - `CHANGELOG.md`: release history
 - `LICENSE`: MIT
 
@@ -85,8 +86,8 @@ xattr -dr com.apple.quarantine .
 ```
 
 On Windows, download `hdrswitch-<version>-windows-x64.zip` and unzip it. It
-contains `hdrctl.exe`, `m27p6s-hdr.ps1`, this README, the changelog and the
-license. The exe links the C runtime statically, so no Visual C++
+contains `hdrctl.exe`, `m27p6s-hdr.ps1`, `monitor_db.json`, this README, the
+changelog and the license. The exe links the C runtime statically, so no Visual C++
 redistributable is needed.
 
 The exe isn't code-signed, so SmartScreen may warn the first time it runs if
@@ -108,6 +109,18 @@ Local dimming changes only work after you record your monitor's hash in `my_moni
 ```
 
 If `hdrctl` is copied to another folder, copy `monitor_db.json` and `my_monitor` with it. A symlink to `hdrctl` works, since the files are looked up next to the real binary.
+
+### Set up your monitor (Windows)
+
+As on macOS, local dimming changes only work after you record your monitor's hash in `my_monitor`, next to `hdrctl.exe`. In PowerShell, in the unzipped release folder or in `win\` after building from source:
+
+```powershell
+.\hdrctl.exe identify                                      # prints the identity and hash
+(.\hdrctl.exe identify | Select-String '^Hash:').Line.Split()[-1] | Set-Content my_monitor -Encoding ascii
+.\hdrctl.exe identify                                      # should now say "listed" and "matches"
+```
+
+The hash is the same on both platforms, so a `my_monitor` from a Mac also works on Windows.
 
 ### Build from source (macOS)
 
@@ -190,7 +203,8 @@ hdrctl.exe toggle                flip between on/off
 hdrctl.exe hdr on|off            HDR only
 hdrctl.exe ddc dump              read all monitor settings (DDC/CI VCP codes)
 hdrctl.exe ddc get <code>        read one VCP code, e.g. 0xF4
-hdrctl.exe ddc set 0xF4 0|2      local dimming Off|Standard (the only DDC write allowed)
+hdrctl.exe ddc set <code> <value> local dimming level listed in monitor_db.json (the only DDC write allowed)
+hdrctl.exe identify              print the monitor's identity and hash
 
 Options:
   --display <text>       part of the display name        (default: M27P6S)
@@ -217,7 +231,7 @@ hdrctl profile <name|path>       color profile only
 hdrctl ddc dump                  read all monitor settings (DDC/CI VCP codes)
 hdrctl ddc get <code>            read one VCP code, e.g. 0xF4
 hdrctl ddc set <code> <value>    local dimming level listed in monitor_db.json (the only DDC write allowed)
-hdrctl identify                  print the monitor's identity and hash (macOS)
+hdrctl identify                  print the monitor's identity and hash
 
 Options:
   --display <text>       part of the display name        (default: M27P6S)
@@ -259,7 +273,7 @@ The structure is the same, but every API used is public and documented, so there
 - **HDR** is switched with `DisplayConfigSetDeviceInfo`. The tool prefers `DISPLAYCONFIG_DEVICE_INFO_SET_HDR_STATE` (Windows 11 24H2+), which controls HDR separately from wide colour gamut, and falls back to the older `SET_ADVANCED_COLOR_STATE` on Windows 10 and early Windows 11. This is the same setting as Settings > System > Display > Use HDR.
 - **Display identity** comes from one `DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME` call, which returns the EDID manufacturer ID, product code and friendly name. Note that Windows reports the manufacturer ID as the raw big-endian EDID bytes, so it is byte-swapped before being decoded into letters, while the product code is already in host order.
 - **Local dimming** uses the same vendor VCP code `0xF4` over DDC/CI, through the public monitor-configuration API in `dxva2.dll` (`SetVCPFeature` / `GetVCPFeatureAndVCPFeatureReply`). The DDC handle is resolved by matching the GDI device name (`\\.\DISPLAY1`) that both the display-config source and the `HMONITOR` report.
-- The DDC connection is opened and the monitor verified before HDR is switched, so a missing monitor or a failed check changes nothing. After switching HDR the tool waits ~1.5 s for the mode set to finish, then writes local dimming with the same read-back-and-retry loop.
+- The DDC connection is opened and the monitor looked up in `my_monitor` and `monitor_db.json` before HDR is switched, so a missing or unknown monitor changes nothing. After switching HDR the tool waits ~1.5 s for the mode set to finish, then writes local dimming with the same read-back-and-retry loop.
 - Local dimming is read back and retried for up to ~10 seconds, as on macOS.
 - **One x64 binary covers Windows 10 and 11.** The newer HDR API is not a separate exported function, only a different integer passed to the same `DisplayConfigSetDeviceInfo`, so nothing fails to resolve at load time on Windows 10; the choice happens at runtime instead. `--legacy-hdr` forces the older API, which is how the Windows 10 path can be exercised on Windows 11. `status` prints which API answered.
 - DDC **reads** are retried too, for up to ~2 seconds per code. On a busy bus a read often gets no reply at all, which would otherwise make the safety checks fail when commands run back to back. A read that succeeds is never retried, so a value that comes back *wrong* still fails its check immediately rather than getting another chance at matching.
@@ -277,7 +291,7 @@ The structure is the same, but every API used is public and documented, so there
 | `firmware_version` (VCP 0xC9) | `0` |
 | `local_dimming_range_max` (VCP 0xF4) | `5` |
 
-### macOS
+Both platforms work the same way and compute the same hash.
 
 The values are written as compact JSON in that order and hashed with SHA-256:
 
@@ -296,23 +310,20 @@ The hash must equal the one in `my_monitor` and be a key in `monitor_db.json`. T
 }
 ```
 
-`on` uses the `standard` level and `off` uses `off`. If any value can't be read, `my_monitor` is missing or different, or the hash isn't in the database, the tool prints `monitor unknown: <reason>` and exits with status 1 **before** switching HDR or the profile. `list`, `status`, `hdr`, `profile`, `identify`, `ddc get` and `ddc dump` don't write to the monitor and work on any display.
+`on` uses the `standard` level and `off` uses `off`. If any value can't be read, `my_monitor` is missing or different, or the hash isn't in the database, the tool prints `monitor unknown: <reason>` and exits with status 1 **before** switching HDR or the profile. `list`, `status`, `hdr`, `profile` (macOS), `identify`, `ddc get` and `ddc dump` don't write to the monitor and work on any display.
 
 `ddc set` accepts only the local dimming code and a level listed for the monitor. Everything else is refused, because other codes can factory-reset the monitor, change input or power, or hit vendor service settings.
 
 To add a monitor: map its local dimming code (`hdrctl ddc dump` with local dimming Off, change it in the monitor's menu, dump again, diff), run `hdrctl identify`, and add an entry under the printed hash. After a firmware update the hash may change and the tool will report `monitor unknown`; redo the mapping before adding the new hash. The firmware can't be hashed over DDC/CI. VCP 0xC9 is the only version the monitor reports, and this vendor may leave it at 0, so a firmware update could go unnoticed.
 
-### Windows
-
-The Windows build still compares the same six values against constants in `win/hdrctl.cpp` and allows only `ddc set 0xF4 0|2`. All six were confirmed to read identically on Windows.
+On Windows, the EDID values come from the display-config API and the VCP values from `dxva2.dll`. All six were confirmed to read identically on Windows. The hash is computed with the built-in BCrypt API, and `monitor_db.json` is read by a small JSON parser in `win/hdrctl.cpp`, so there are no extra dependencies.
 
 Each change sends one 6-byte DDC "set" for VCP 0xF4 only, never a table of settings. The monitor's firmware decides how it saves that. If local dimming is already at the target value the write is skipped, since reads don't wear the monitor's memory. If the read gets no reply, it writes anyway. A real change usually takes 1–2 writes, up to 10 when the monitor is busy. Switching a few times a day is fine, but don't run it in a tight loop.
 
 ## Troubleshooting
 
 - **`no connected display matches "M27P6S"`**: the monitor isn't connected to this Mac (or a KVM/switch has it on another input). Run `hdrctl list` to see display names.
-- **`monitor unknown: ...`** (macOS): the reason follows. *no reply*: DDC was busy; rerun, or quit MonitorControl. *my_monitor not found*: see [Set up your monitor](#set-up-your-monitor-macos). *connected monitor is ..., my_monitor is ...* or *isn't in monitor_db.json*: a different monitor or new firmware. Nothing was changed. See [Safety checks](#safety-checks).
-- **`warning: couldn't verify the monitor ...`** / **`warning: monitor doesn't match ...`** (Windows): a check got no reply, or returned a different value. Nothing was changed.
+- **`monitor unknown: ...`**: the reason follows. *no reply*: DDC was busy; rerun, or quit MonitorControl (macOS) or other DDC apps (Windows). *my_monitor not found*: see Set up your monitor ([macOS](#set-up-your-monitor-macos), [Windows](#set-up-your-monitor-windows)). *connected monitor is ..., my_monitor is ...* or *isn't in monitor_db.json*: a different monitor or new firmware. Nothing was changed. See [Safety checks](#safety-checks).
 - **`hdrctl` hangs with no output**: the monitor is asleep and doesn't answer DDC reads. Wake it and rerun.
 - **`warning: couldn't confirm local dimming ...`**: the DDC bus is shared, and other DDC apps such as MonitorControl can garble replies. Quit them and rerun, or check the monitor's menu. `hdrctl ddc get 0xF4` shows the current value (it may need a couple of tries).
 - **Wrong profile applied** (macOS): check `env | grep _PROFILE` for overrides, and `which -a hdrctl` for an older copy on your PATH.
@@ -321,8 +332,9 @@ Windows only:
 
 - **`couldn't open a DDC/CI connection`**: the display was found but the driver wouldn't open a monitor handle. Check that DDC/CI is enabled in the monitor's own menu, and prefer a direct cable; many USB-C hubs, KVMs and DisplayPort MST hubs don't pass DDC/CI through.
 - **`warning: couldn't confirm local dimming ...`**: another DDC app such as ClickMonitorDDC, Twinkle Tray or a vendor OSD utility is sharing the bus. Quit it and rerun.
-- **`warning: couldn't verify the monitor (DDC busy? ...)`**: reads are already retried for ~2 seconds per code, so if this still appears the bus is genuinely blocked. Nothing was changed. Quit other DDC apps and rerun.
+- **`monitor unknown: ... no reply`**: reads are already retried for ~2 seconds per code, so if this still appears the bus is genuinely blocked. Nothing was changed. Quit other DDC apps and rerun.
 - **`warning: couldn't switch HDR on`**: Windows refused the mode set. Check that `hdrctl.exe list` reports the display as HDR-capable, and that HDR isn't blocked by a system policy (`hdrctl.exe status` prints *limited by system policy* when it is).
+- **`my_monitor` exists but `identify` says *different monitor***: in Windows PowerShell 5.1, `>` writes UTF-16, which doesn't match. Recreate it with the `Set-Content ... -Encoding ascii` command from [Set up your monitor](#set-up-your-monitor-windows).
 - **`... cannot be loaded because running scripts is disabled`**: allow local scripts once with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
 ## License

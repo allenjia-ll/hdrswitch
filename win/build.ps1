@@ -27,7 +27,7 @@ $clArgs = @(
     '/nologo', '/std:c++17', '/W4', '/O2', '/EHsc', '/MT', '/DNDEBUG',
     "`"$src`"",
     "/Fe:`"$exe`"", "/Fo:`"$obj`"",
-    '/link', 'user32.lib', 'dxva2.lib'
+    '/link', 'user32.lib', 'dxva2.lib', 'bcrypt.lib'
 ) -join ' '
 
 Write-Host "building hdrctl.exe ..."
@@ -35,4 +35,7 @@ Write-Host "building hdrctl.exe ..."
 if ($LASTEXITCODE -ne 0) { throw "build failed (exit $LASTEXITCODE)" }
 
 Remove-Item $obj -ErrorAction SilentlyContinue
+
+# hdrctl.exe reads monitor_db.json from its own folder; the repo keeps one copy at the root.
+Copy-Item (Join-Path (Split-Path $PSScriptRoot -Parent) 'monitor_db.json') (Join-Path $PSScriptRoot 'monitor_db.json') -Force
 Write-Host "built $exe"

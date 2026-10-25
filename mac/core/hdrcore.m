@@ -5,6 +5,7 @@
 #include <dlfcn.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -49,6 +50,10 @@ NSString *HCDataDirectory(void) {
 }
 
 static NSString *dataPath(NSString *name) { return [HCDataDirectory() stringByAppendingPathComponent:name]; }
+
+static NSString *gDBPath;
+
+void HCSetDBPath(NSString *path) { gDBPath = path; }
 
 // --------------------------------------------------------------- SkyLight --
 
@@ -227,6 +232,45 @@ IOAVServiceRef HCFindAVService(NSString *needle, NSDictionary **outAttrs, NSStri
     return found;
 }
 
+// IOAVService calls block for as long as the monitor doesn't answer (e.g. while it's asleep), and
+// they can't be cancelled. So each call runs on a serial queue and we stop waiting after 3 s. Until
+// a timed-out call returns, further calls fail at once instead of queueing behind it.
+
+static const int64_t kDDCTimeoutSeconds = 3;
+static atomic_int  gDDCPending;    // calls dispatched but not yet returned (0 or 1)
+static atomic_bool gDDCTimedOut;   // a call timed out since HCDDCClearTimeout
+
+BOOL HCDDCDidTimeOut(void)  { return atomic_load(&gDDCTimedOut); }
+void HCDDCClearTimeout(void) { atomic_store(&gDDCTimedOut, false); }
+
+static IOReturn i2c(IOAVServiceRef av, BOOL write, uint32_t offset, uint8_t *buf, uint32_t len) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ queue = dispatch_queue_create("hdrcore.ddc", DISPATCH_QUEUE_SERIAL); });
+
+    if (atomic_load(&gDDCPending) > 0) { atomic_store(&gDDCTimedOut, true); return kIOReturnTimeout; }
+    // The block can outlive this call if it times out, so it keeps its own buffer and service reference.
+    NSMutableData *data = [NSMutableData dataWithBytes:buf length:len];
+    CFTypeRef service = CFRetain(av);
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    __block IOReturn result = kIOReturnTimeout;
+    atomic_fetch_add(&gDDCPending, 1);
+    dispatch_async(queue, ^{
+        result = write ? IOAVServiceWriteI2C(service, 0x37, offset, data.mutableBytes, len)
+                       : IOAVServiceReadI2C(service, 0x37, offset, data.mutableBytes, len);
+        CFRelease(service);
+        atomic_fetch_sub(&gDDCPending, 1);
+        dispatch_semaphore_signal(done);
+    });
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, kDDCTimeoutSeconds * NSEC_PER_SEC)) != 0) {
+        if (!atomic_exchange(&gDDCTimedOut, true))
+            logWarn(@"the monitor didn't answer over DDC within %lld seconds (asleep?)", kDDCTimeoutSeconds);
+        return kIOReturnTimeout;
+    }
+    if (!write) memcpy(buf, data.bytes, len);
+    return result;
+}
+
 // Returns NO if the write didn't go through after 3 tries (the bus is flaky).
 static BOOL ddcWrite(IOAVServiceRef av, uint8_t *pkt, uint32_t len) {
     uint8_t chk = 0x6E ^ 0x51;
@@ -235,7 +279,8 @@ static BOOL ddcWrite(IOAVServiceRef av, uint8_t *pkt, uint32_t len) {
     IOReturn err = kIOReturnError;
     for (int i = 0; i < 3 && err != kIOReturnSuccess; i++) {
         usleep(10000);
-        err = IOAVServiceWriteI2C(av, 0x37, 0x51, pkt, len);
+        err = i2c(av, YES, 0x51, pkt, len);
+        if (err == kIOReturnTimeout) break;
     }
     return err == kIOReturnSuccess;
 }
@@ -246,7 +291,7 @@ static int ddcGetOnce(IOAVServiceRef av, uint8_t code, uint16_t *cur, uint16_t *
     if (!ddcWrite(av, req, sizeof req)) return -1;
     usleep(50000);
     uint8_t r[11] = { 0 };
-    if (IOAVServiceReadI2C(av, 0x37, 0x51, r, sizeof r) != kIOReturnSuccess) return -1;
+    if (i2c(av, NO, 0x51, r, sizeof r) != kIOReturnSuccess) return -1;
     // reply: 6E 88 02 <result> <code> <type> <maxH> <maxL> <curH> <curL> <chk>
     uint8_t chk = 0x50;
     for (int i = 0; i < 10; i++) chk ^= r[i];
@@ -342,7 +387,7 @@ NSString *HCSHA256Hex(NSString *s) {
 }
 
 NSDictionary *HCLoadDB(NSString **error) {
-    NSString *path = dataPath(@"monitor_db.json");
+    NSString *path = gDBPath ?: dataPath(@"monitor_db.json");
     NSData *d = path ? [NSData dataWithContentsOfFile:path] : nil;
     if (!d) return @{};
     NSError *err = nil;
@@ -426,7 +471,10 @@ static NSString *identityDiff(NSDictionary *live, NSDictionary *mine) {
 
 NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString **why, NSString **error) {
     NSDictionary *live = HCReadIdentityValues(av, attrs, why);
-    if (!live) return nil;
+    return live ? HCFindMonitorForIdentity(live, why, error) : nil;
+}
+
+NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString **why, NSString **error) {
     NSString *hash = HCSHA256Hex(HCIdentityJSON(live));
     HCEnsureMyMonitor(live);
     NSDictionary *mineIdentity = nil;

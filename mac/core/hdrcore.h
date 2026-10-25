@@ -21,6 +21,8 @@ void HCSetLogger(void (^logger)(HCLogLevel level, NSString *message));
 // the running executable (symlinks resolved).
 void HCSetDataDirectory(NSString *dir);
 NSString *HCDataDirectory(void);
+// monitor_db.json's path, if it isn't in the data folder (e.g. the app ships it in its Resources).
+void HCSetDBPath(NSString *path);
 
 // --------------------------------------------------------------- SkyLight --
 
@@ -49,6 +51,10 @@ typedef CFTypeRef IOAVServiceRef;
 // The DDC/CI service of the external display whose name contains needle, or NULL with *error set.
 // outAttrs gets the display's EDID ProductAttributes. Release the service with CFRelease.
 IOAVServiceRef HCFindAVService(NSString *needle, NSDictionary **outAttrs, NSString **error);
+// Every DDC call gives up after 3 s (a sleeping monitor never answers), logging one warning.
+// HCDDCDidTimeOut says whether a call timed out since HCDDCClearTimeout.
+BOOL HCDDCDidTimeOut(void);
+void HCDDCClearTimeout(void);
 // Returns NO if there's no valid reply or the monitor doesn't support the code.
 BOOL HCDDCGet(IOAVServiceRef av, uint8_t code, uint16_t *cur, uint16_t *max);
 
@@ -80,6 +86,8 @@ void HCEnsureMyMonitor(NSDictionary *identity);
 // Creates my_monitor.json first if it doesn't exist (see HCEnsureMyMonitor).
 // Otherwise nil, with *why set (monitor unknown) or *error set (monitor_db.json is invalid).
 NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString **why, NSString **error);
+// The same, for identity values already read with HCReadIdentityValues.
+NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString **why, NSString **error);
 // The local dimming VCP code from a DB entry, with its levels (name -> value) in *levels,
 // or -1 with *error set if the entry is malformed.
 int HCLocalDimming(NSDictionary *entry, NSDictionary<NSString *, NSNumber *> **levels, NSString **error);

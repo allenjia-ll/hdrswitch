@@ -39,7 +39,8 @@ hdrctl.exe --display "<part of display name>" hdr on
 macOS:
 
 - `mac/hdrctl.m`: the `hdrctl` command line (arguments, output, exit codes)
-- `mac/core/hdrcore.h`, `mac/core/hdrcore.m`: HDR, color profile, DDC/CI and monitor DB code, shared with the planned menu bar app
+- `mac/core/hdrcore.h`, `mac/core/hdrcore.m`: HDR, color profile, DDC/CI and monitor DB code, shared by the CLI and the menu bar app
+- `mac/app/`: the menu bar app (in progress): `Sources/*.swift`, `Info.plist`, `Resources/menu_icon*.png`, and `build.sh`, which builds `mac/app/build/HDR Switch.app`
 - `mac/build.sh`: builds `mac/hdrctl`
 - `mac/release.sh`: builds and packages a binary release zip
 - `mac/m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
@@ -152,6 +153,15 @@ mac/build.sh          # writes mac/hdrctl
 ```
 
 The build writes `mac/hdrctl` next to the source, `monitor_db.json` and `my_monitor.json`. A symlink keeps it able to find them; a copy needs both files copied with it.
+
+### Build the menu bar app (macOS, in progress)
+
+```sh
+mac/app/build.sh                              # writes mac/app/build/HDR Switch.app
+open "mac/app/build/HDR Switch.app"
+```
+
+The app lives in the menu bar only (no Dock icon). Clicking its icon opens a panel with the monitor's name, an HDR toggle, and the current color profile and local dimming setting; **HDR Switch Settings…** opens the (still empty) settings window. The toggle does the same as `hdrctl on` / `off`: HDR, then the color profile (BT.2020 / Display P3), then local dimming. If the monitor isn't supported (not in `monitor_db.json`, or not the one in `my_monitor.json`), its name gets an exclamation mark, and the toggle switches HDR and the color profile only, leaving local dimming alone. If the monitor doesn't answer over DDC within 3 seconds (e.g. it's asleep), the panel shows a warning and local dimming is unknown. The app ships `monitor_db.json` inside `HDR Switch.app` and keeps `my_monitor.json` in `~/Library/Application Support/HDR Switch/`, created on first use. To quit it: `pkill -x HDRSwitch`. It's Swift (SwiftUI inside an AppKit status item, so it runs on macOS 12) built with `swiftc`; no Xcode project is needed, and it uses the same `mac/core` as the CLI.
 
 ### Build from source (Windows)
 

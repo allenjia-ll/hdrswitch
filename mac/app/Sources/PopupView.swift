@@ -1,6 +1,6 @@
 // The popup's contents, laid out like Control Center's Displays popup: the monitor's name with a
 // refresh button, a round HDR toggle tile, color profile and local dimming dropdowns, a divider, and
-// a settings row.
+// Settings and Quit rows.
 
 import AppKit
 import SwiftUI
@@ -9,6 +9,7 @@ struct PopupView: View {
     @ObservedObject var model: MonitorModel
     let openSettings: () -> Void
     private let settingsRowHover = HoverState()
+    private let quitRowHover = HoverState()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -76,8 +77,11 @@ struct PopupView: View {
             Divider()
                 .padding(.top, 12)
                 .padding(.bottom, 6)
-            MenuRow(title: "HDR Switch Settings…", hover: settingsRowHover, action: openSettings)
-                .padding(.horizontal, -8)   // text lines up with the title; the highlight extends past it
+            Group {
+                MenuRow(title: "HDR Switch Settings…", hover: settingsRowHover, action: openSettings)
+                MenuRow(title: "Quit HDR Switch", hover: quitRowHover) { NSApp.terminate(nil) }
+            }
+            .padding(.horizontal, -8)   // text lines up with the title; the highlight extends past it
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)

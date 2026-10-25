@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - macOS menu bar app (in progress), in `mac/app/`: a menu bar icon (`menu_icon`) that opens a Control Center–style panel with the monitor's name, an HDR toggle, the current color profile and local dimming setting, and an **HDR Switch Settings…** row, which opens an empty settings window. The toggle does the same as `hdrctl on` / `off`. For a monitor that isn't supported, the name gets an exclamation mark (with an explanation on hover) and the toggle leaves local dimming alone. `monitor_db.json` ships in the app; `my_monitor.json` is kept in `~/Library/Application Support/HDR Switch/`. Built with `mac/app/build.sh`; runs on macOS 12 or later.
 - Menu bar app: color profile and local dimming dropdowns (installed RGB display profiles; the levels in `monitor_db.json`), applied when picked, and a refresh button that re-reads everything.
+- Menu bar app settings window: for HDR on and for HDR off, **Set color profile to** and **Set local dimming to**, each a checkbox and a dropdown (installed RGB display profiles; the monitor's levels from `monitor_db.json`). The HDR toggle sets the chosen values after switching, or leaves them alone when unchecked. Defaults: BT.2020 and Standard for on, Display P3 and Off for off. **Confirm** saves, **Cancel** discards.
 - `HCSetDBPath`, `HCFindMonitorForIdentity` and `HCListProfiles` in `mac/core`, for the app.
 
 ### Changed

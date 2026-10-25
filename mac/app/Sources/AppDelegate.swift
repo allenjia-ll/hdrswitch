@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var panel: PopupPanel!
     private var settingsWindow: NSWindow?
+    private let settings = SettingsModel()
     private var outsideClickMonitor: Any?
     private var modelChanges: AnyCancellable?
     private let monitor = MonitorModel()
@@ -62,12 +63,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openSettings() {
         closePopup()
+        settings.reload()   // always open on the saved settings; closing without Confirm discards edits
         if settingsWindow == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
-                             styleMask: [.titled, .closable, .miniaturizable],
+            let host = NSHostingView(rootView: SettingsView(model: settings, close: { [weak self] in
+                self?.settingsWindow?.close()
+            }))
+            let w = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize),
+                             styleMask: [.titled, .closable],
                              backing: .buffered, defer: false)
             w.title = "HDR Switch Settings"
-            w.contentView = NSHostingView(rootView: SettingsView())
+            w.contentView = host
             w.isReleasedWhenClosed = false
             w.center()
             settingsWindow = w

@@ -193,10 +193,3 @@ struct VisualEffect: NSViewRepresentable {
     }
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
-
-// Empty for now.
-struct SettingsView: View {
-    var body: some View {
-        Color.clear.frame(width: 480, height: 320)
-    }
-}

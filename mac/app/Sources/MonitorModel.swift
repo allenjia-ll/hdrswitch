@@ -3,10 +3,7 @@
 import Foundation
 
 final class MonitorModel: ObservableObject {
-    // The same defaults as hdrctl.
-    static let displayName = "M27P6S"
-    static let hdrProfile = "Rec. ITU-R BT.2020-1"
-    static let sdrProfile = "Display P3"
+    static let displayName = "M27P6S"   // the same default as hdrctl --display
 
     enum Support { case unknown, supported, unsupported }
 
@@ -50,26 +47,40 @@ final class MonitorModel: ObservableObject {
         run(d, warnIfSkipped: nil) { _ in nil }
     }
 
-    // The same steps as hdrctl on/off: HDR, then the color profile, then local dimming, which is
-    // skipped if the monitor isn't supported.
+    // The same steps as hdrctl on/off: HDR, then the color profile and the local dimming level from
+    // Settings (each unless unchecked). Local dimming is skipped if the monitor isn't supported.
     func toggleHDR() {
         guard canChange, let d = findDisplay() else { return }
         let on = !HCIsHDR(d)
+        let profileRule = Preferences.profile(hdrOn: on), dimmingRule = Preferences.dimming(hdrOn: on)
         switching = true
-        run(d, warnIfSkipped: Self.notChanged) { lookup in
+        let skipped = dimmingRule.enabled ? Self.notChanged : nil   // nothing to skip if unchecked
+        run(d, warnIfSkipped: skipped) { lookup in
             var err: NSString?
-            guard let url = HCResolveProfile(on ? Self.hdrProfile : Self.sdrProfile, &err) else { return err as String? }
+            // Resolve both first, so a missing profile or level fails before anything changes.
+            var url: URL?
+            if profileRule.enabled {
+                url = HCResolveProfile(profileRule.value, &err)
+                if url == nil { return err as String? }
+            }
+            var level: NSNumber?
+            if dimmingRule.enabled, let dim = lookup.dimming {
+                level = dim.levels[dimmingRule.value]
+                if level == nil {
+                    return "\"\(dimmingRule.value.capitalized)\" isn't one of this monitor's local dimming levels. Check HDR Switch Settings."
+                }
+            }
             if !HCSetHDR(d, on, &err) { return err as String? }
-            if !HCSetProfile(d, url, &err) { return err as String? }
-            if let dim = lookup.dimming, let level = dim.levels[on ? "standard" : "off"],
-               !HCSetDimming(dim.av, dim.code, level.uint16Value, on ? "standard" : "off") {
+            if let url = url, !HCSetProfile(d, url, &err) { return err as String? }
+            if let dim = lookup.dimming, let level = level,
+               !HCSetDimming(dim.av, dim.code, level.uint16Value, dimmingRule.value) {
                 return Self.notConfirmed
             }
             return nil
         }
     }
 
-    // Applies the profile now, like `hdrctl profile`. The HDR toggle still uses its defaults.
+    // Applies the profile now, like `hdrctl profile`. The HDR toggle uses the profiles from Settings.
     func selectProfile(_ name: String) {
         guard canChange, name != profile, let url = profileURLs[name], let d = findDisplay() else { return }
         profile = name

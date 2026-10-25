@@ -18,6 +18,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - macOS: every DDC call gives up after 3 seconds (tracked per DDC connection, so a call that never returns doesn't block a new connection), so a sleeping monitor no longer makes `hdrctl` (or the app) hang. The CLI prints `warning: the monitor didn't answer over DDC within 3 seconds (asleep?)` and fails as if the monitor gave no reply; the app shows a warning in its panel.
 
+## [0.1.7-win] - 2026-10-25
+
+A Windows-only release. The last Windows binary was 0.1.3, so this is the first
+Windows build to include the monitor database from 0.1.4 and 0.1.6. macOS is
+unchanged since 0.1.6 and no new macOS binary ships here.
+
+### Fixed
+
+- Windows: `ddc get` and `ddc set` accepted anything `strtol` could not parse as `0`. Because `0` is a listed local dimming level, `hdrctl ddc set 0xF4 banana` silently switched local dimming off and exited 0. Both arguments are now parsed strictly, as `parseNum` does on macOS, and report `not a number: <value>`. They are also checked before the monitor is read, so a bad argument changes nothing.
+- Windows: `status` run straight after an HDR switch could report `monitor unknown`, because the identity read gave the DDC bus only ~2 s to answer while the write path allows ~10 s. The identity read now waits up to ~5 s per code.
+
+### Notes
+
+- The Windows side of 0.1.6 has now been built and tested on Windows 11 25H2 (build 26200) with a KTC M27P6S: the identity hash computed with BCrypt matches the macOS-generated `monitor_db.json` key exactly, and `identify`, `identify --save`, `my_monitor.json` creation, `list`, `status`, `on`, `off`, `toggle`, `hdr on|off` and `ddc dump|get|set` all behave as on macOS.
+- Coming from the 0.1.3 Windows zip, this build also brings the 0.1.4 and 0.1.6 Windows changes: monitors are identified by the SHA-256 of their identity through `monitor_db.json` and `my_monitor.json` rather than hard-coded checks, the local dimming VCP code and its levels come from the database, and `hdrctl identify [--save]` is new. Keep `monitor_db.json` in the same folder as `hdrctl.exe`.
+- Still only ever run on Windows 11. One x64 binary is intended to cover Windows 10 as well, since the newer HDR API is selected at runtime rather than linked at load time, and the Windows 10 path was exercised on Windows 11 with `--legacy-hdr`, but no Windows 10 machine has been tested.
+- The color profile is still macOS-only.
+
 ## [0.1.6] - 2026-10-24
 
 ### Added
@@ -96,7 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.7-win...HEAD
+[0.1.7-win]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.6...v0.1.7-win
 [0.1.6]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.4...v0.1.6
 [0.1.4]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.2...v0.1.3

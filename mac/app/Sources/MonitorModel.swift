@@ -35,12 +35,6 @@ final class MonitorModel: ObservableObject {
 
     var canChange: Bool { skyLightLoaded && connected && !busy }
 
-    var stateText: String {
-        if switching { return "Switching…" }
-        if !connected { return "Not connected" }
-        return hdrOn ? "On" : "Off"
-    }
-
     // Re-reads everything. Local dimming needs DDC reads, so it runs on `work`, over a new DDC
     // connection each time.
     func refresh() {

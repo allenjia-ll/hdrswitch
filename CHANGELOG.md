@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Menu bar app: the panel's HDR, Color profile and Local dimming rows are styled like System Settings > Displays: 13 pt labels, the controls on the right, a small switch for HDR (instead of a round icon), menus drawn as the value followed by up/down arrows in a gray circle (a rounded box around both while the mouse is over one), and two lighter panels: HDR, then Color profile and Local dimming with a separator. The panel is a little wider (330 pt) so "Rec. ITU-R BT.2020-1" fits. The pointing-hand cursor and the "Toggle HDR" tooltip the round icon had are gone.
+
 ## [0.2.1] - 2026-10-26
 
 The first release of the HDR Switch menu bar app, as a DMG (`hdrswitch-0.2.1-macos-arm64.dmg`), alongside

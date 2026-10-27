@@ -65,10 +65,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openSettings() {
         closePopup()
-        settings.reload()   // always open on the saved settings; closing without Confirm discards edits
+        settings.reload()   // the saved settings (changes in the window are saved as they're made)
         // A new window each time (unless it's open), sized to the current content.
         if settingsWindow?.isVisible != true {
-            settingsWindow = makeSettingsWindow(model: settings, close: { [weak self] in self?.settingsWindow?.close() },
+            settingsWindow = makeSettingsWindow(model: settings,
                                                 detect: { [weak self] in self?.openDetection() },
                                                 viewDetected: { [weak self] in self?.openDetected() },
                                                 clearDetected: { [weak self] in self?.clearDetected() })

@@ -45,28 +45,32 @@ enum Preferences {
     }
 }
 
-// The window's edits, saved only on Confirm. A class rather than @State (see HoverState).
+// The settings window's state. Each change is saved right away, as in macOS's own Settings windows;
+// nothing applies until the next HDR switch. A class rather than @State (see HoverState).
 final class SettingsModel: ObservableObject {
-    @Published var onProfile = Preferences.onProfile
-    @Published var offProfile = Preferences.offProfile
-    @Published var onDimming = Preferences.onDimming
-    @Published var offDimming = Preferences.offDimming
+    @Published var onProfile = Preferences.onProfile { didSet { if !loading { Preferences.onProfile = onProfile } } }
+    @Published var offProfile = Preferences.offProfile { didSet { if !loading { Preferences.offProfile = offProfile } } }
+    @Published var onDimming = Preferences.onDimming { didSet { if !loading { Preferences.onDimming = onDimming } } }
+    @Published var offDimming = Preferences.offDimming { didSet { if !loading { Preferences.offDimming = offDimming } } }
+    private var loading = false   // reload() shows the saved values without writing them back
     @Published private(set) var profiles: [String] = []
     @Published private(set) var levels: [String] = []   // the set-up monitor's levels, by value
     @Published private(set) var hasDetected = false      // local_monitor_db.json exists
 
-    // Shows the saved settings, dropping any unconfirmed edits.
+    // Shows the saved settings.
     func reload() {
+        loading = true
         onProfile = Preferences.onProfile
         offProfile = Preferences.offProfile
         onDimming = Preferences.onDimming
         offDimming = Preferences.offDimming
+        loading = false
         profiles = HCListProfiles().compactMap { $0["name"] as? String }
         levels = Self.setUpMonitorLevels()
         hasDetected = Self.hasDetectedMonitors()
     }
 
-    // After a detection is saved: the set-up monitor's levels may have changed. Keeps unsaved edits.
+    // After a detection is saved or deleted: the set-up monitor's levels may have changed.
     func reloadLevels() {
         levels = Self.setUpMonitorLevels()
         hasDetected = Self.hasDetectedMonitors()
@@ -76,13 +80,6 @@ final class SettingsModel: ObservableObject {
     private static func hasDetectedMonitors() -> Bool {
         guard let path = HCLocalDBPath() else { return false }
         return FileManager.default.fileExists(atPath: path)
-    }
-
-    func confirm() {
-        Preferences.onProfile = onProfile
-        Preferences.offProfile = offProfile
-        Preferences.onDimming = onDimming
-        Preferences.offDimming = offDimming
     }
 
     // The local dimming levels in monitor_db.json for the monitor in my_monitor.json. No DDC, so
@@ -105,6 +102,8 @@ final class SettingsModel: ObservableObject {
 // A window that can resize to its content after it changes (see refit()).
 final class TranslucentWindow: NSWindow {
     var measure: () -> NSSize = { .zero }   // the SwiftUI content's current size
+
+    override func cancelOperation(_ sender: Any?) { close() }   // Esc, as with the close button
 
     // New size for the current content, keeping the top edge where it is.
     func refit() {
@@ -143,16 +142,15 @@ func makeTranslucentWindow<Content: View>(title: String, content: Content) -> Tr
     return w
 }
 
-func makeSettingsWindow(model: SettingsModel, close: @escaping () -> Void, detect: @escaping () -> Void,
+func makeSettingsWindow(model: SettingsModel, detect: @escaping () -> Void,
                         viewDetected: @escaping () -> Void, clearDetected: @escaping () -> Void) -> TranslucentWindow {
     makeTranslucentWindow(title: "HDR Switch Settings",
-                          content: SettingsView(model: model, close: close, detect: detect, viewDetected: viewDetected,
+                          content: SettingsView(model: model, detect: detect, viewDetected: viewDetected,
                                                 clearDetected: clearDetected))
 }
 
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
-    let close: () -> Void
     let detect: () -> Void
     let viewDetected: () -> Void
     let clearDetected: () -> Void
@@ -187,14 +185,6 @@ struct SettingsView: View {
                         Button("Delete Detected Monitor…", action: clearDetected)
                     }
                 }
-            }
-            Divider()
-            HStack {
-                Spacer()
-                Button("Cancel", action: close)
-                    .keyboardShortcut(.cancelAction)
-                Button("Confirm") { model.confirm(); close() }
-                    .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)

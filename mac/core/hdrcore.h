@@ -116,6 +116,35 @@ NSDictionary<NSNumber *, NSArray<NSNumber *> *> *HCDDCScan(IOAVServiceRef av, NS
 // second scan at level 0. A candidate reads the same in scans[0] and repeat, answers in every scan
 // with the same max, and has a different value at every level.
 NSArray<NSNumber *> *HCDimmingCandidates(NSArray<NSDictionary *> *scans, NSDictionary *repeat);
+// One detection run. The user sets each level in the monitor's menu, in order, and scanLevel: is
+// called after each; then the candidates are known. The first level reads every code twice, to rule
+// out values that change on their own; later levels re-read only the codes that answered.
+@interface HCDetection : NSObject
+- (instancetype)initWithService:(IOAVServiceRef)av levelCount:(NSUInteger)count;
+@property (readonly) NSUInteger levelCount;
+@property (readonly) NSUInteger scannedLevels;
+// Scans the next level. progress gets the pass (0, then 1 for the first level's second read), the
+// codes read so far in that pass and the pass's total. Returns NO if the monitor stopped answering
+// over DDC (asleep?); the detection can't continue then.
+- (BOOL)scanNextLevelWithProgress:(void (^)(NSUInteger pass, NSUInteger done, NSUInteger total))progress;
+// After every level is scanned: the candidate codes (see HCDimmingCandidates).
+@property (readonly) NSArray<NSNumber *> *candidates;
+- (uint16_t)valueOfCode:(uint8_t)code atLevel:(NSUInteger)level;
+- (uint16_t)rangeMaxOfCode:(uint8_t)code;
+// @[ @{ @"name": names[i], @"value": value at level i }, ... ] for HCSaveLocalMonitor.
+- (NSArray<NSDictionary *> *)levelsNamed:(NSArray<NSString *> *)names forCode:(uint8_t)code;
+@end
+
+// The level HDR on (or off) should use by default: "standard" / "off" if there is one, otherwise the
+// last / first level.
+NSString *HCSuggestedHDRLevel(NSArray<NSString *> *names, BOOL on);
+// The report section for a detected entry: tool (e.g. "hdrctl detect"), OS, date, verified_by_user,
+// and the optional firmware shown in the monitor's menu and connection, when not empty.
+NSDictionary *HCDetectionReport(NSString *tool, NSString *firmware, NSString *connection);
+// A pre-filled new-issue link on GitHub for contributing a detected entry (entryJSON: the entry
+// keyed by its hash, e.g. HCPrettyJSON(@{ hash: entry })).
+NSURL *HCContributionURL(NSDictionary *identity, NSString *entryJSON, NSString *tool);
+
 // Adds (or replaces) this monitor's entry in local_monitor_db.json and returns it, or nil with *error
 // set. levels: @[ @{ @"name": "off", @"value": @0 }, ... ]. hdrOn / hdrOff: the level names hdrctl
 // on / off use (stored as settings.local_dimming.hdr_on / hdr_off). report: details for reviewers.

@@ -661,3 +661,84 @@ NSArray<NSNumber *> *HCDimmingCandidates(NSArray<NSDictionary *> *scans, NSDicti
     }
     return out;
 }
+
+@implementation HCDetection {
+    IOAVServiceRef _av;
+    NSMutableArray<NSDictionary *> *_scans;
+    NSDictionary *_repeat;
+}
+
+- (instancetype)initWithService:(IOAVServiceRef)av levelCount:(NSUInteger)count {
+    if ((self = [super init])) {
+        _av = CFRetain(av);
+        _levelCount = count;
+        _scans = [NSMutableArray array];
+    }
+    return self;
+}
+
+- (void)dealloc { CFRelease(_av); }
+
+- (NSUInteger)scannedLevels { return _scans.count; }
+
+- (BOOL)scanNextLevelWithProgress:(void (^)(NSUInteger, NSUInteger, NSUInteger))progress {
+    if (_scans.count >= _levelCount) return NO;
+    HCDDCClearTimeout();
+    if (_scans.count == 0) {
+        [_scans addObject:HCDDCScan(_av, nil, ^(NSUInteger done, NSUInteger total) { if (progress) progress(0, done, total); })];
+        _repeat = HCDDCScan(_av, [_scans[0] allKeys], ^(NSUInteger done, NSUInteger total) { if (progress) progress(1, done, total); });
+    } else {
+        [_scans addObject:HCDDCScan(_av, [_scans[0] allKeys], ^(NSUInteger done, NSUInteger total) { if (progress) progress(0, done, total); })];
+    }
+    return !HCDDCDidTimeOut();
+}
+
+- (NSArray<NSNumber *> *)candidates {
+    return _scans.count == _levelCount ? HCDimmingCandidates(_scans, _repeat) : @[];
+}
+
+- (uint16_t)valueOfCode:(uint8_t)code atLevel:(NSUInteger)level {
+    return [_scans[level][@(code)][0] unsignedShortValue];
+}
+
+- (uint16_t)rangeMaxOfCode:(uint8_t)code {
+    return [_scans[0][@(code)][1] unsignedShortValue];
+}
+
+- (NSArray<NSDictionary *> *)levelsNamed:(NSArray<NSString *> *)names forCode:(uint8_t)code {
+    NSMutableArray *levels = [NSMutableArray array];
+    for (NSUInteger i = 0; i < names.count && i < _scans.count; i++)
+        [levels addObject:@{ @"name": names[i], @"value": _scans[i][@(code)][0] }];
+    return levels;
+}
+
+@end
+
+NSString *HCSuggestedHDRLevel(NSArray<NSString *> *names, BOOL on) {
+    NSString *preferred = on ? @"standard" : @"off";
+    return [names containsObject:preferred] ? preferred : on ? names.lastObject : names.firstObject;
+}
+
+NSDictionary *HCDetectionReport(NSString *tool, NSString *firmware, NSString *connection) {
+    NSMutableDictionary *report = [@{ @"tool": tool,
+                                      @"os": NSProcessInfo.processInfo.operatingSystemVersionString,
+                                      @"verified_by_user": @YES,
+                                      @"detected": [[NSISO8601DateFormatter new] stringFromDate:[NSDate date]] } mutableCopy];
+    if (firmware.length) report[@"osd_firmware"] = firmware;
+    if (connection.length) report[@"connection"] = connection;
+    return report;
+}
+
+static NSString *percentEncode(NSString *s) {
+    NSMutableCharacterSet *ok = [NSMutableCharacterSet alphanumericCharacterSet];
+    [ok addCharactersInString:@"-._~"];
+    return [s stringByAddingPercentEncodingWithAllowedCharacters:ok];
+}
+
+NSURL *HCContributionURL(NSDictionary *identity, NSString *entryJSON, NSString *tool) {
+    NSString *title = [NSString stringWithFormat:@"Monitor: %@ (%@)", identity[@"product_name"], identity[@"manufacturer"]];
+    NSString *body = [NSString stringWithFormat:@"Detected with `%@`. Entry for `monitor_db.json`:\n\n```json\n%@\n```\n", tool, entryJSON];
+    return [NSURL URLWithString:[NSString stringWithFormat:@"https://github.com/allenjia-ll/hdrswitch/issues/new?title=%@&body=%@",
+                                 percentEncode(title), percentEncode(body)]];
+}
+

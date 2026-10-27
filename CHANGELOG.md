@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-26
+
+The first release of the HDR Switch menu bar app, as a DMG (`hdrswitch-0.2.1-macos-arm64.dmg`), alongside
+the CLI zip. The app and `hdrctl` now share `my_monitor.json` and `local_monitor_db.json` in
+`~/Library/Application Support/HDR Switch/`. Windows is unchanged since 0.1.7-win and no new Windows
+binary ships here.
+
 ### Added
 
 - `mac/app/release.sh <version>`: builds the menu bar app and packages it as `dist/hdrswitch-<version>-macos-arm64.dmg` (with its SHA-256), holding `HDR Switch.app` next to an Applications shortcut. It sets the app's version, re-signs it, and checks it's arm64, targets macOS 12, has a valid signature and includes `monitor_db.json`. The CLI zip (`mac/release.sh`) is unchanged.
@@ -140,7 +147,8 @@ unchanged since 0.1.6 and no new macOS binary ships here.
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.8-mac...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.8-mac...v0.2.1
 [0.1.8-mac]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.7-win...v0.1.8-mac
 [0.1.7-win]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.6...v0.1.7-win
 [0.1.6]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.4...v0.1.6

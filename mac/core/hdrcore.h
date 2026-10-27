@@ -25,7 +25,7 @@ NSString *HCDataDirectory(void);
 // from here unless HCSetDBPath says otherwise (the app ships it in its Resources).
 NSString *HCToolDirectory(void);
 void HCSetDBPath(NSString *path);
-// Before 0.1.9 the CLI kept my_monitor.json and local_monitor_db.json next to hdrctl. Moves them to
+// Before 0.2.1 the CLI kept my_monitor.json and local_monitor_db.json next to hdrctl. Moves them to
 // the data folder if it doesn't have them yet, and returns a line for each move.
 NSArray<NSString *> *HCMigrateToolDirectoryFiles(void);
 // Old files next to hdrctl that are ignored because the data folder already has its own.

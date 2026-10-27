@@ -64,7 +64,7 @@ static NSString *gDBPath;
 
 void HCSetDBPath(NSString *path) { gDBPath = path; }
 
-// Before 0.1.9 the CLI kept these next to hdrctl.
+// Before 0.2.1 the CLI kept these next to hdrctl.
 static NSArray<NSString *> *toolDirectoryFiles(void) { return @[ @"my_monitor.json", @"my_monitor", @"local_monitor_db.json" ]; }
 
 NSArray<NSString *> *HCMigrateToolDirectoryFiles(void) {

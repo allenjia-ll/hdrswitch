@@ -2,7 +2,7 @@
 # Build the menu bar app and package it: dist/hdrswitch-<version>-macos-arm64.dmg (at the repo root),
 # with its SHA-256. Opening the DMG shows HDR Switch.app next to an Applications shortcut to drag it
 # onto. The CLI zip is separate (mac/release.sh).
-# Usage: mac/app/release.sh <version>    e.g. mac/app/release.sh 0.1.9
+# Usage: mac/app/release.sh <version>    e.g. mac/app/release.sh 0.2.1
 set -euo pipefail
 cd "$(dirname "$0")"
 

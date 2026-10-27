@@ -144,7 +144,7 @@ To check it, or to switch to the monitor that's connected now:
 ./hdrctl identify --save   # rewrite my_monitor.json for the connected monitor
 ```
 
-An old one-line `my_monitor` file from 0.1.4 is replaced by `my_monitor.json` automatically. Before 0.1.9, `my_monitor.json` and `local_monitor_db.json` were kept next to `hdrctl`; the first run of a newer `hdrctl` moves them to Application Support (unless it already has its own copy, which then wins; `hdrctl identify` points out any leftover). The shipped `monitor_db.json` stays next to `hdrctl`: if you copy `hdrctl` to another folder, copy `monitor_db.json` with it, or use a symlink, since it's looked up next to the real binary.
+An old one-line `my_monitor` file from 0.1.4 is replaced by `my_monitor.json` automatically. Before 0.2.1, `my_monitor.json` and `local_monitor_db.json` were kept next to `hdrctl`; the first run of a newer `hdrctl` moves them to Application Support (unless it already has its own copy, which then wins; `hdrctl identify` points out any leftover). The shipped `monitor_db.json` stays next to `hdrctl`: if you copy `hdrctl` to another folder, copy `monitor_db.json` with it, or use a symlink, since it's looked up next to the real binary.
 
 ### Set up your monitor (Windows)
 
@@ -195,7 +195,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 ```sh
 mac/release.sh 0.1.2        # the CLI: dist/hdrswitch-0.1.2-macos-arm64.zip and its SHA-256
-mac/app/release.sh 0.1.9    # the menu bar app: dist/hdrswitch-0.1.9-macos-arm64.dmg and its SHA-256
+mac/app/release.sh 0.2.1    # the menu bar app: dist/hdrswitch-0.2.1-macos-arm64.dmg and its SHA-256
 ```
 
 The DMG holds `HDR Switch.app` next to an Applications shortcut to drag it onto. The script sets the app's version from the argument, re-signs it (ad hoc), and checks it's arm64, targets macOS 12, has a valid signature and includes `monitor_db.json`.

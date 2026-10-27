@@ -10,6 +10,7 @@ struct PopupView: View {
     let openSettings: () -> Void
     private let settingsRowHover = HoverState()
     private let quitRowHover = HoverState()
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -92,6 +93,9 @@ struct PopupView: View {
         .padding(.top, 14)
         .padding(.bottom, 8)
         .frame(width: 330)   // room for "Rec. ITU-R BT.2020-1" beside the labels, in the panels
+        // In light mode the popup is near white with gray panels on it, as in System Settings; in dark
+        // mode the panels are the lighter ones, as System Settings does there.
+        .background(Color.white.opacity(colorScheme == .dark ? 0 : 0.6))
         .background(VisualEffect())
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -114,7 +118,8 @@ struct HDRSwitch: View {
     }
 }
 
-// A rounded panel a little lighter than the popup, holding rows, like System Settings' groups.
+// A rounded panel holding rows, like System Settings' groups: a little darker than the popup in light
+// mode, a little lighter in dark mode.
 struct Panel<Content: View>: View {
     @ViewBuilder let content: () -> Content
     @Environment(\.colorScheme) private var colorScheme
@@ -125,7 +130,7 @@ struct Panel<Content: View>: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(colorScheme == .dark ? Color.white.opacity(0.07) : Color.white.opacity(0.5)))
+                            .fill(colorScheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.045)))
     }
 }
 

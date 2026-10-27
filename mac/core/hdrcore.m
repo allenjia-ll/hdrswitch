@@ -136,27 +136,42 @@ BOOL HCSetHDR(CGDirectDisplayID d, BOOL on, NSString **error) {
 
 // --------------------------------------------------------------- displays --
 
+NSString *HCDisplayUUID(CGDirectDisplayID d) {
+    CFUUIDRef u = CGDisplayCreateUUIDFromDisplayID(d);
+    if (!u) return nil;
+    NSString *s = CFBridgingRelease(CFUUIDCreateString(kCFAllocatorDefault, u));
+    CFRelease(u);
+    return s;
+}
+
 NSArray<NSDictionary *> *HCAllDisplays(void) {
     NSMutableArray *out = [NSMutableArray array];
     for (NSScreen *s in [NSScreen screens]) {
         NSNumber *n = s.deviceDescription[@"NSScreenNumber"];
         if (!n) continue;
-        [out addObject:@{ @"id": n, @"name": s.localizedName ?: @"(unknown)" }];
+        [out addObject:@{ @"id": n, @"name": s.localizedName ?: @"(unknown)", @"uuid": HCDisplayUUID(n.unsignedIntValue) ?: @"",
+                          @"builtin": @(CGDisplayIsBuiltin(n.unsignedIntValue) != 0) }];
     }
     return out;
 }
 
-CGDirectDisplayID HCFindDisplay(NSString *needle, NSString **outName, NSString **error) {
+CGDirectDisplayID HCFindDisplay(NSString *spec, NSString **outName, NSString **error) {
     NSMutableArray<NSDictionary *> *hits = [NSMutableArray array];
     for (NSDictionary *d in HCAllDisplays())
-        if ([d[@"name"] rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound)
+        if (spec ? [d[@"uuid"] caseInsensitiveCompare:spec] == NSOrderedSame ||
+                   [d[@"name"] rangeOfString:spec options:NSCaseInsensitiveSearch].location != NSNotFound
+                 : ![d[@"builtin"] boolValue])
             [hits addObject:d];
     if (hits.count == 0) {
-        fail(error, @"no connected display matches \"%@\" — is it connected to this Mac? (run: hdrctl list)", needle);
+        if (spec) fail(error, @"no connected display matches \"%@\" — is it connected to this Mac? (run: hdrctl list)", spec);
+        else fail(error, @"no external display is connected to this Mac (run: hdrctl list)");
         return 0;
     }
     if (hits.count > 1) {
-        fail(error, @"%lu displays match \"%@\" — use a more specific --display", (unsigned long)hits.count, needle);
+        if (spec) fail(error, @"%lu displays match \"%@\" — use a more specific --display, or its UUID (run: hdrctl list)",
+                       (unsigned long)hits.count, spec);
+        else fail(error, @"%lu external displays are connected — choose one with --display <name or UUID> (run: hdrctl list)",
+                  (unsigned long)hits.count);
         return 0;
     }
     if (outName) *outName = hits[0][@"name"];
@@ -278,31 +293,53 @@ extern IOReturn IOAVServiceReadI2C(IOAVServiceRef service, uint32_t chipAddress,
 extern IOReturn IOAVServiceWriteI2C(IOAVServiceRef service, uint32_t chipAddress, uint32_t dataAddress,
                                     void *buf, uint32_t len);
 
-// Walk the IOService plane: each external DCPAVServiceProxy belongs to the framebuffer seen before it.
-IOAVServiceRef HCFindAVService(NSString *needle, NSDictionary **outAttrs, NSString **error) {
+// The display's framebuffer in the IORegistry, from CoreDisplay (private): e.g.
+// IOService:/AppleARMPE/arm-io@10F00000/AppleH16GFamilyIO/dispext0@84000000/IOMobileFramebufferShim.
+static NSString *framebufferPath(CGDirectDisplayID d) {
+    typedef CFDictionaryRef (*InfoFn)(CGDirectDisplayID);
+    static InfoFn info;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        void *h = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_LAZY);
+        if (h) info = (InfoFn)dlsym(h, "CoreDisplay_DisplayCreateInfoDictionary");
+    });
+    NSDictionary *dict = info ? CFBridgingRelease(info(d)) : nil;
+    NSString *path = dict[@"IODisplayLocation"];
+    return [path isKindOfClass:NSString.class] ? path : nil;
+}
+
+// Each external DCPAVServiceProxy names its framebuffer in its path ("…/dispext0:dcpav-service-epic:0/
+// DCPAVServiceProxy"), so it's matched to the display's framebuffer by that name.
+IOAVServiceRef HCFindAVService(CGDirectDisplayID d, NSDictionary **outAttrs, NSString **error) {
+    NSString *fbPath = framebufferPath(d);
+    NSArray<NSString *> *parts = fbPath.pathComponents;
+    NSString *fb = parts.count >= 2 ? [parts[parts.count - 2] componentsSeparatedByString:@"@"].firstObject : nil;
+    if (!fb.length) { fail(error, @"can't find display %u's framebuffer in the IO registry", d); return NULL; }
+
+    io_registry_entry_t fbEntry = IORegistryEntryFromPath(kIOMainPortDefault, fbPath.UTF8String);
+    NSDictionary *attrs = nil;
+    if (fbEntry) {
+        attrs = CFBridgingRelease(IORegistryEntryCreateCFProperty(fbEntry, CFSTR("DisplayAttributes"), kCFAllocatorDefault, 0));
+        IOObjectRelease(fbEntry);
+    }
+
     io_iterator_t it;
-    if (IORegistryCreateIterator(kIOMainPortDefault, kIOServicePlane, kIORegistryIterateRecursively, &it) != KERN_SUCCESS)
-        { fail(error, @"cannot iterate the IO registry"); return NULL; }
+    if (IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("DCPAVServiceProxy"), &it) != KERN_SUCCESS)
+        { fail(error, @"cannot search the IO registry"); return NULL; }
+    NSString *marker = [NSString stringWithFormat:@"/%@:", fb];
     IOAVServiceRef found = NULL;
-    NSDictionary *lastAttrs = nil;
     io_service_t s;
     while (!found && (s = IOIteratorNext(it))) {
-        io_name_t cls;
-        IOObjectGetClass(s, cls);
-        if (!strcmp(cls, "IOMobileFramebufferShim") || !strcmp(cls, "AppleCLCD2")) {
-            NSDictionary *attrs = CFBridgingRelease(IORegistryEntryCreateCFProperty(s, CFSTR("DisplayAttributes"), kCFAllocatorDefault, 0));
-            if (attrs[@"ProductAttributes"][@"ProductName"]) lastAttrs = attrs[@"ProductAttributes"];
-        } else if (!strcmp(cls, "DCPAVServiceProxy")) {
-            NSString *loc = CFBridgingRelease(IORegistryEntryCreateCFProperty(s, CFSTR("Location"), kCFAllocatorDefault, 0));
-            if ([loc isEqualToString:@"External"] && lastAttrs &&
-                [lastAttrs[@"ProductName"] rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound)
-                found = IOAVServiceCreateWithService(kCFAllocatorDefault, s);
-        }
+        NSString *loc = CFBridgingRelease(IORegistryEntryCreateCFProperty(s, CFSTR("Location"), kCFAllocatorDefault, 0));
+        io_string_t path;
+        if ([loc isEqualToString:@"External"] && IORegistryEntryGetPath(s, kIOServicePlane, path) == KERN_SUCCESS &&
+            [@(path) containsString:marker])
+            found = IOAVServiceCreateWithService(kCFAllocatorDefault, s);
         IOObjectRelease(s);
     }
     IOObjectRelease(it);
-    if (!found) { fail(error, @"no DDC connection to a display matching \"%@\"", needle); return NULL; }
-    if (outAttrs) *outAttrs = lastAttrs;
+    if (!found) { fail(error, @"no DDC connection to display %u (%@)", d, fb); return NULL; }
+    if (outAttrs) *outAttrs = attrs[@"ProductAttributes"];
     return found;
 }
 
@@ -567,65 +604,99 @@ NSDictionary *HCSaveLocalMonitor(NSDictionary *identity, uint8_t code, NSArray<N
 
 NSString *HCMyMonitorPath(void) { return dataPath(@"my_monitor.json"); }
 
-NSString *HCReadMyMonitor(NSDictionary **identity, NSString **why) {
+// The file up to 0.2.1: one monitor, keyed by its hash, { "<hash>": { "identity": { ... } } }.
+static BOOL isOneMonitorFile(NSDictionary *json) {
+    NSDictionary *entry = json.allValues.firstObject;
+    return json.count == 1 && [json.allKeys.firstObject length] == 64 &&
+           [entry isKindOfClass:NSDictionary.class] && !entry[@"hash"];
+}
+
+// my_monitor.json: @{} if it doesn't exist, or nil with *why set if it isn't a JSON object.
+static NSDictionary *readMyMonitors(NSString **why) {
     NSString *path = HCMyMonitorPath();
     NSData *d = path ? [NSData dataWithContentsOfFile:path] : nil;
-    if (!d) { *why = @"my_monitor.json not found (run: hdrctl identify --save)"; return nil; }
+    if (!d) return @{};
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL];
-    if (![json isKindOfClass:NSDictionary.class] || json.count != 1) {
-        *why = @"my_monitor.json isn't valid: it must be a JSON object with one monitor (run: hdrctl identify --save)";
+    if (![json isKindOfClass:NSDictionary.class]) {
+        *why = @"my_monitor.json isn't valid: it must be a JSON object (run: hdrctl identify --save)";
         return nil;
     }
-    NSString *hash = json.allKeys.firstObject;
-    NSDictionary *entry = json[hash];
-    NSDictionary *ident = [entry isKindOfClass:NSDictionary.class] ? entry[@"identity"] : nil;
+    return json;
+}
+
+NSString *HCReadMyMonitor(NSString *uuid, NSDictionary **identity, NSString **why) {
+    NSDictionary *json = readMyMonitors(why);
+    if (!json) return nil;
+    BOOL oneMonitor = isOneMonitorFile(json);
+    NSDictionary *entry = oneMonitor ? json.allValues.firstObject : uuid ? json[uuid] : nil;
+    if (![entry isKindOfClass:NSDictionary.class]) {
+        *why = json.count ? [NSString stringWithFormat:@"my_monitor.json has no monitor for display %@ (run: hdrctl identify --save)", uuid]
+                          : @"my_monitor.json not found (run: hdrctl identify --save)";
+        return nil;
+    }
+    NSString *hash = oneMonitor ? json.allKeys.firstObject : entry[@"hash"];
+    NSDictionary *ident = entry[@"identity"];
     NSString *canonical = [ident isKindOfClass:NSDictionary.class] ? HCIdentityJSON(ident) : nil;
     if (!canonical) {
-        *why = @"my_monitor.json isn't valid: its identity section is missing or incomplete (run: hdrctl identify --save)";
+        *why = @"my_monitor.json isn't valid: an identity section is missing or incomplete (run: hdrctl identify --save)";
         return nil;
     }
-    if (![HCSHA256Hex(canonical) isEqualToString:hash]) {
-        *why = @"my_monitor.json isn't valid: its key doesn't match its identity section (run: hdrctl identify --save)";
+    if (![hash isKindOfClass:NSString.class] || ![HCSHA256Hex(canonical) isEqualToString:hash]) {
+        *why = @"my_monitor.json isn't valid: a hash doesn't match its identity section (run: hdrctl identify --save)";
         return nil;
     }
     if (identity) *identity = ident;
     return hash;
 }
 
-BOOL HCSaveMyMonitor(NSDictionary *identity, NSString **error) {
-    NSString *canonical = HCIdentityJSON(identity), *path = HCMyMonitorPath();
-    if (!canonical) return fail(error, @"incomplete identity");
-    if (!path) return fail(error, @"can't find the data folder (~/Library/Application Support/HDR Switch)");
-    NSMutableArray *rows = [NSMutableArray array];
-    for (NSString *k in identityKeys()) {
-        id v = identity[k];
-        [rows addObject:[NSString stringWithFormat:@"      \"%@\": %@", k,
-                         [v isKindOfClass:NSString.class] ? jsonString(v) : [v stringValue]]];
+NSDictionary<NSString *, NSDictionary *> *HCMyMonitors(void) {
+    NSString *why = nil;
+    NSDictionary *json = readMyMonitors(&why);
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    if (!json || isOneMonitorFile(json)) return out;
+    for (NSString *uuid in json) {
+        NSDictionary *identity = nil;
+        if (HCReadMyMonitor(uuid, &identity, &why)) out[uuid] = identity;
     }
-    NSString *text = [NSString stringWithFormat:@"{\n  \"%@\": {\n    \"identity\": {\n%@\n    }\n  }\n}\n",
-                      HCSHA256Hex(canonical), [rows componentsJoinedByString:@",\n"]];
+    return out;
+}
+
+BOOL HCSaveMyMonitor(NSString *uuid, NSDictionary *identity, NSString **error) {
+    NSString *canonical = HCIdentityJSON(identity), *path = HCMyMonitorPath(), *why = nil;
+    if (!canonical) return fail(error, @"incomplete identity");
+    if (!uuid.length) return fail(error, @"the display has no UUID");
+    if (!path) return fail(error, @"can't find the data folder (~/Library/Application Support/HDR Switch)");
+    NSDictionary *json = readMyMonitors(&why);   // an invalid or one-monitor file is replaced
+    NSMutableDictionary *all = json && !isOneMonitorFile(json) ? [json mutableCopy] : [NSMutableDictionary dictionary];
+    all[uuid] = @{ @"hash": HCSHA256Hex(canonical), @"identity": identity };
     NSError *err = nil;
-    if (![text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err])
+    if (![[HCPrettyJSON(all) stringByAppendingString:@"\n"] writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err])
         return fail(error, @"%@", err.localizedDescription);
     [[NSFileManager defaultManager] removeItemAtPath:dataPath(@"my_monitor") error:NULL];   // old one-line format
     return YES;
 }
 
-void HCEnsureMyMonitor(NSDictionary *identity) {
-    NSString *path = HCMyMonitorPath();
-    if (!path || [[NSFileManager defaultManager] fileExistsAtPath:path]) return;
-    NSString *oldPath = dataPath(@"my_monitor");
-    NSString *oldHash = [[NSString stringWithContentsOfFile:oldPath encoding:NSUTF8StringEncoding error:NULL]
-                         stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSString *err = nil;
-    if (!HCSaveMyMonitor(identity, &err)) { logWarn(@"couldn't create %@: %@", path, err); return; }
+void HCEnsureMyMonitor(NSString *uuid, NSDictionary *identity) {
+    NSString *path = HCMyMonitorPath(), *why = nil;
+    NSDictionary *json = readMyMonitors(&why);
+    if (!path || !json || !uuid.length) return;   // HCReadMyMonitor reports an invalid file
     NSString *hash = HCSHA256Hex(HCIdentityJSON(identity));
-    if (oldHash)
+    BOOL oneMonitor = isOneMonitorFile(json);
+    if (oneMonitor ? ![json.allKeys.firstObject isEqualToString:hash] : json[uuid] != nil) return;
+    NSString *oldPath = dataPath(@"my_monitor");
+    NSString *oldHash = json.count ? nil : [[NSString stringWithContentsOfFile:oldPath encoding:NSUTF8StringEncoding error:NULL]
+                                            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *err = nil;
+    if (!HCSaveMyMonitor(uuid, identity, &err)) { logWarn(@"couldn't update %@: %@", path, err); return; }
+    if (oneMonitor)
+        logInfo(@"Updated %@ to list monitors by display: %@ is on display %@", path, identity[@"product_name"], uuid);
+    else if (oldHash)
         logInfo(@"Replaced %@ with my_monitor.json for %@%@", oldPath, identity[@"product_name"],
                 [oldHash isEqualToString:hash] ? @""
                     : [NSString stringWithFormat:@" (the old file was for a different monitor, %@)", oldHash]);
     else
-        logInfo(@"Created %@ for %@ (%@)", path, identity[@"product_name"], hash);
+        logInfo(@"%@ %@ for %@ on display %@ (%@)", json.count ? @"Added to" : @"Created", path,
+                identity[@"product_name"], uuid, hash);
 }
 
 // "firmware_version is 1, my_monitor.json has 0" for each field that differs.
@@ -637,16 +708,16 @@ static NSString *identityDiff(NSDictionary *live, NSDictionary *mine) {
     return out.count ? [out componentsJoinedByString:@"; "] : nil;
 }
 
-NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString **why, NSString **error) {
+NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString *uuid, NSString **why, NSString **error) {
     NSDictionary *live = HCReadIdentityValues(av, attrs, why);
-    return live ? HCFindMonitorForIdentity(live, why, error) : nil;
+    return live ? HCFindMonitorForIdentity(live, uuid, why, error) : nil;
 }
 
-NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString **why, NSString **error) {
+NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString *uuid, NSString **why, NSString **error) {
     NSString *hash = HCSHA256Hex(HCIdentityJSON(live));
-    HCEnsureMyMonitor(live);
+    HCEnsureMyMonitor(uuid, live);
     NSDictionary *mineIdentity = nil;
-    NSString *mine = HCReadMyMonitor(&mineIdentity, why);
+    NSString *mine = HCReadMyMonitor(uuid, &mineIdentity, why);
     if (!mine) return nil;
     if (![hash isEqualToString:mine]) {
         *why = [NSString stringWithFormat:@"connected monitor doesn't match my_monitor.json: %@ "

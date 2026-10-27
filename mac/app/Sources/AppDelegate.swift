@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = SettingsModel()
     private var outsideClickMonitor: Any?
     private var modelChanges: AnyCancellable?
-    private let monitor = MonitorModel()
+    private let displays = DisplayList()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // monitor_db.json ships in the app. my_monitor.json and local_monitor_db.json are in the core's
@@ -30,9 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.target = self
             button.action = #selector(togglePopup(_:))
         }
-        panel = PopupPanel(content: PopupView(model: monitor, openSettings: { [weak self] in self?.openSettings() }))
-        // The popup's height changes with its contents (e.g. a warning), so refit it after each change.
-        modelChanges = monitor.objectWillChange.sink { [weak self] _ in
+        panel = PopupPanel(content: PopupView(displays: displays, openSettings: { [weak self] in self?.openSettings() }))
+        // The popup's height changes with its contents (e.g. a warning, or another monitor), so refit it
+        // after each change.
+        modelChanges = displays.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.panel.refit() }
         }
         // Clicking another app's window activates that app; close the popup then.
@@ -46,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showPopup() {
         guard let button = statusItem.button, let window = button.window else { return }
-        monitor.refresh()
+        displays.refresh()
         NSApp.activate(ignoringOtherApps: true)   // so hover tooltips and Esc work
         panel.show(below: window.convertToScreen(button.convert(button.bounds, to: nil)))
         // Clicks in other apps don't reach us, so watch for them to close the popup.
@@ -74,10 +75,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    // Detect Monitor, from Settings. A new run each time, unless one is open.
+    // Detect Monitor, from Settings, for the monitor Settings shows. A new run each time, unless one is open.
     private func openDetection() {
         if detectionWindow?.isVisible != true {
-            let model = DetectionModel(onSaved: { [weak self] in self?.detectedMonitorsChanged() })
+            guard !settings.selected.isEmpty else { return }
+            let model = DetectionModel(uuid: settings.selected, name: settings.selectedTitle,
+                                       onSaved: { [weak self] in self?.detectedMonitorsChanged() })
             detectionWindow = makeTranslucentWindow(title: "Detect Monitor",
                                                     content: DetectionView(model: model, close: { [weak self] in
                                                         self?.detectionWindow?.close()

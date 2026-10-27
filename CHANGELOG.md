@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Several external monitors: the menu bar app's panel has a section for each (its name, HDR switch, color profile and local dimming), with the refresh button by the first name; it refreshes them all and looks for newly connected monitors. With none connected, the panel says so. Settings are kept for each monitor, with a **Monitor** menu at the top of the settings window when there's more than one; Detect Monitor runs on the monitor shown there. A monitor without its own settings starts from those saved before (0.2.1 kept one set).
+- `hdrctl list` shows each display's UUID, and marks the built-in one.
+
 ### Changed
 
-- Menu bar app: the settings window starts with the name of the monitor its settings are for (the one in `my_monitor.json`).
+- Monitors are told apart by their display UUID, the one macOS keeps for each monitor, instead of by name: the app no longer looks only for a display named M27P6S, and `hdrctl` without `--display` uses the only external display (with several, `--display` takes part of a name or a UUID). DDC is sent over the connection of the display's own port, found in the IORegistry, so two identical monitors each get their own.
+- `my_monitor.json` holds one monitor per display UUID, `{ "<UUID>": { "hash": …, "identity": … } }`. A display's entry is added the first time it's used; an existing one-monitor file is converted when that monitor is next read. 0.2.1 and older don't read the new format (they change nothing until `hdrctl identify --save`), and neither does the Windows port yet.
+- Menu bar app: when local dimming isn't available, Settings suggests Detect Monitor.
+
+- Menu bar app: the settings window starts with the name of the monitor its settings are for.
 - Menu bar app: the settings window matches the panel: each section is a panel under its heading, with a separator between its rows; the checkboxes are on the left and the System Settings-style menus on the right (dimmed while unchecked). Settings, Detect Monitor and Detected Monitor are near white in light mode, like the panel.
 - Menu bar app: the panel's HDR, Color profile and Local dimming rows are styled like System Settings > Displays: 13 pt labels, the controls on the right, a small switch for HDR (instead of a round icon), menus drawn as the value followed by up/down arrows in a gray circle (a rounded box around both while the mouse is over one), and two panels: HDR, then Color profile and Local dimming with a separator. In light mode the panel is near white with slightly gray panels on it, as in System Settings; in dark mode the panels are slightly lighter. The panel is a little wider (330 pt) so "Rec. ITU-R BT.2020-1" fits. The pointing-hand cursor and the "Toggle HDR" tooltip the round icon had are gone.
 

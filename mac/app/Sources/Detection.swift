@@ -19,7 +19,7 @@ final class DetectionModel: ObservableObject {
     @Published private(set) var progress = 0.0           // during a scan, 0...1
     @Published private(set) var status = ""              // what's happening, under the step
     @Published private(set) var failure = ""             // .failed
-    @Published private(set) var monitorName = MonitorModel.displayName
+    @Published private(set) var monitorName: String
     @Published private(set) var knownNote: String?       // already in a database
     @Published var levelCount = 2
     @Published var names = Array(repeating: "", count: DetectionModel.maxLevels)
@@ -32,13 +32,18 @@ final class DetectionModel: ObservableObject {
     @Published private(set) var savedPath = ""
     @Published private(set) var savedJSON = ""
 
+    private let uuid: String   // the display detected
     private let onSaved: () -> Void
     private var av: AnyObject?
     private var identity: [AnyHashable: Any]?
     private var hash = ""
     private var detection: HCDetection?
 
-    init(onSaved: @escaping () -> Void) { self.onSaved = onSaved }
+    init(uuid: String, name: String, onSaved: @escaping () -> Void) {
+        self.uuid = uuid
+        monitorName = name
+        self.onSaved = onSaved
+    }
 
     // MARK: - For the view
 
@@ -102,9 +107,11 @@ final class DetectionModel: ObservableObject {
         step = .intro
         busy = true
         status = "Reading the monitor…"
+        var notFound: NSString?
+        let d = HCFindDisplay(uuid, nil, &notFound)   // NSScreen, so on the main thread
         ddcQueue.async {
-            var attrs: NSDictionary?, err: NSString?, why: NSString?
-            let av = HCFindAVService(MonitorModel.displayName, &attrs, &err)?.takeRetainedValue()
+            var attrs: NSDictionary?, err = notFound, why: NSString?
+            let av = d == 0 ? nil : HCFindAVService(d, &attrs, &err)?.takeRetainedValue()
             let identity = av.flatMap { HCReadIdentityValues($0, attrs as? [AnyHashable: Any], &why) }
             DispatchQueue.main.async {
                 self.busy = false
@@ -117,7 +124,7 @@ final class DetectionModel: ObservableObject {
                 self.av = av
                 self.identity = identity
                 self.hash = HCSHA256Hex(HCIdentityJSON(identity))
-                self.monitorName = identity["product_name"] as? String ?? MonitorModel.displayName
+                self.monitorName = identity["product_name"] as? String ?? self.monitorName
                 var dbErr: NSString?
                 let local = HCLoadLocalDB(&dbErr), db = HCLoadDB(&dbErr)
                 if local?[self.hash] != nil {

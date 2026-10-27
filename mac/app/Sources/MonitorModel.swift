@@ -1,17 +1,36 @@
-// State of the monitor shown in the popup, backed by mac/core/hdrcore.
+// State of the external monitors shown in the popup, backed by mac/core/hdrcore.
 
+import Combine
 import Foundation
 
 // All DDC work (popup refresh and changes, monitor detection) runs here, one thing at a time, since
 // overlapping DDC requests garble each other's replies.
 let ddcQueue = DispatchQueue(label: "HDR Switch DDC")
 
-final class MonitorModel: ObservableObject {
-    static let displayName = "M27P6S"   // the same default as hdrctl --display
+// The connected external displays, one MonitorModel each, kept by display UUID.
+final class DisplayList: ObservableObject {
+    @Published private(set) var monitors: [MonitorModel] = []
+    private var changes: [AnyCancellable] = []
 
+    // Finds the external displays (NSScreen, so on the main thread) and re-reads each.
+    func refresh() {
+        let displays = HCAllDisplays().filter { !(($0["builtin"] as? Bool) ?? false) }
+        let old = Dictionary(monitors.map { ($0.uuid, $0) }, uniquingKeysWith: { a, _ in a })
+        monitors = displays.compactMap { d in
+            guard let uuid = d["uuid"] as? String, !uuid.isEmpty else { return nil }
+            return old[uuid] ?? MonitorModel(uuid: uuid, name: d["name"] as? String ?? "Display")
+        }
+        // A change in any monitor is a change in the list (the popup refits to it).
+        changes = monitors.map { $0.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() } }
+        monitors.forEach { $0.refresh() }
+    }
+}
+
+final class MonitorModel: ObservableObject {
     enum Support { case unknown, supported, unsupported }
 
-    @Published private(set) var name = MonitorModel.displayName
+    let uuid: String   // the display's, which macOS keeps for this monitor
+    @Published private(set) var name: String
     @Published private(set) var connected = false
     @Published private(set) var hdrOn = false
     @Published private(set) var profile = ""
@@ -23,14 +42,20 @@ final class MonitorModel: ObservableObject {
     @Published private(set) var busy = false                     // any lookup or change running
     @Published private(set) var warning: String?
 
-    private let skyLightLoaded: Bool
+    private var skyLightLoaded: Bool { Self.skyLightError == nil }
     private var profileURLs: [String: URL] = [:]
     private let work = ddcQueue
 
-    init() {
+    // Loaded once for all monitors: nil, or why HDR can't be switched.
+    private static let skyLightError: String? = {
         var err: NSString?
-        skyLightLoaded = HCLoadSkyLight(&err)
-        if !skyLightLoaded { warning = (err as String?) ?? "Can't load SkyLight, so HDR can't be switched." }
+        return HCLoadSkyLight(&err) ? nil : (err as String?) ?? "Can't load SkyLight, so HDR can't be switched."
+    }()
+
+    init(uuid: String, name: String) {
+        self.uuid = uuid
+        self.name = name
+        warning = Self.skyLightError
     }
 
     var canChange: Bool { skyLightLoaded && connected && !busy }
@@ -50,7 +75,7 @@ final class MonitorModel: ObservableObject {
     func toggleHDR() {
         guard canChange, let d = findDisplay() else { return }
         let on = !HCIsHDR(d)
-        let profileRule = Preferences.profile(hdrOn: on), dimmingRule = Preferences.dimming(hdrOn: on)
+        let profileRule = Preferences.profile(hdrOn: on, uuid: uuid), dimmingRule = Preferences.dimming(hdrOn: on, uuid: uuid)
         switching = true
         let skipped = dimmingRule.enabled ? Self.notChanged : nil   // nothing to skip if unchecked
         run(d, warnIfSkipped: skipped) { lookup in
@@ -114,7 +139,7 @@ final class MonitorModel: ObservableObject {
         warning = nil
         work.async {
             HCDDCClearTimeout()
-            let lookup = self.lookUpDimming()
+            let lookup = self.lookUpDimming(d)
             let problem = change(lookup)
             let snapshot = self.snapshot(d, lookup)
             let profiles = HCListProfiles().compactMap { p -> (String, URL)? in
@@ -138,11 +163,12 @@ final class MonitorModel: ObservableObject {
         }
     }
 
+    // The display's current ID (it can change when the monitor reconnects), found by its UUID.
     private func findDisplay() -> CGDirectDisplayID? {
         var found: NSString?, err: NSString?
-        let d = HCFindDisplay(Self.displayName, &found, &err)   // NSScreen, so on the main thread
+        let d = HCFindDisplay(uuid, &found, &err)   // NSScreen, so on the main thread
         connected = d != 0
-        name = (found as String?) ?? Self.displayName
+        if let found = found as String? { name = found }
         if !connected { hdrOn = false; profile = ""; dimming = "Unknown" }
         return connected ? d : nil
     }
@@ -161,11 +187,11 @@ final class MonitorModel: ObservableObject {
         var dimming: Dimming? { if case .supported(let d) = self { return d } else { return nil } }
     }
 
-    // Local dimming settings for the connected monitor, if it's in monitor_db.json and matches
-    // my_monitor.json (created on first run). Blocking DDC reads, so only on `work`.
-    private func lookUpDimming() -> Lookup {
+    // Local dimming settings for the monitor, if it's in monitor_db.json and matches its display's
+    // entry in my_monitor.json (added on first use). Blocking DDC reads, so only on `work`.
+    private func lookUpDimming(_ d: CGDirectDisplayID) -> Lookup {
         var attrs: NSDictionary?, why: NSString?, err: NSString?
-        guard let av = HCFindAVService(Self.displayName, &attrs, &err)?.takeRetainedValue() else {
+        guard let av = HCFindAVService(d, &attrs, &err)?.takeRetainedValue() else {
             NSLog("HDR Switch: %@", (err as String?) ?? "no DDC connection")
             return .unreachable
         }
@@ -173,7 +199,7 @@ final class MonitorModel: ObservableObject {
             NSLog("HDR Switch: %@", (why as String?) ?? "couldn't read the monitor's identity")
             return .unreachable
         }
-        guard let entry = HCFindMonitorForIdentity(live, &why, &err) else {
+        guard let entry = HCFindMonitorForIdentity(live, uuid, &why, &err) else {
             NSLog("HDR Switch: monitor unknown: %@", ((err ?? why) as String?) ?? "")
             return .unsupported
         }

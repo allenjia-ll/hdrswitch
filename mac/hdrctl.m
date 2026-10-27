@@ -11,11 +11,11 @@
 //   hdrctl profile <name|path>       color profile only
 //   hdrctl ddc dump|get <code>       read monitor settings (DDC/CI VCP codes)
 //   hdrctl ddc set <code> <value>    local dimming level listed in monitor_db.json (the only DDC write allowed)
-//   hdrctl identify [--save]         print the monitor's identity and hash; --save rewrites my_monitor.json
+//   hdrctl identify [--save]         print the monitor's identity and hash; --save updates my_monitor.json
 //   hdrctl detect                    find the monitor's local dimming code and levels (interactive)
 //
 // Options:
-//   --display <text>       part of the display name (default: M27P6S)
+//   --display <text>       part of the display name, or its UUID (default: the only external display)
 //   --hdr-profile <spec>   profile description or .icc path used by "on"  (default: "Rec. ITU-R BT.2020-1")
 //   --sdr-profile <spec>   profile description or .icc path used by "off" (default: "Display P3")
 //
@@ -48,10 +48,10 @@ static void say(NSString *fmt, ...) {
 
 static void usage(int code) {
     printf(
-        "usage: hdrctl [--display <name>] [--hdr-profile <spec>] [--sdr-profile <spec>] <command>\n"
+        "usage: hdrctl [--display <name|UUID>] [--hdr-profile <spec>] [--sdr-profile <spec>] <command>\n"
         "\n"
         "commands:\n"
-        "  list                  list displays, HDR state and current profile\n"
+        "  list                  list displays (with their UUIDs), HDR state and current profile\n"
         "  status                HDR state, profile and local dimming of the target display\n"
         "  on                    HDR on  + HDR profile (default: Rec. ITU-R BT.2020-1) + local dimming Standard\n"
         "  off                   HDR off + SDR profile (default: Display P3) + local dimming Off\n"
@@ -61,10 +61,12 @@ static void usage(int code) {
         "  ddc dump              read all monitor settings (DDC/CI VCP codes)\n"
         "  ddc get <code>        read one VCP code (e.g. 0xF4)\n"
         "  ddc set <code> <value> local dimming level listed in monitor_db.json (the only write allowed)\n"
-        "  identify [--save]     print the monitor's identity and hash; --save rewrites my_monitor.json\n"
+        "  identify [--save]     print the monitor's identity and hash; --save updates my_monitor.json\n"
         "  detect                find the monitor's local dimming code and levels (interactive), save them\n"
         "                        to local_monitor_db.json, and optionally contribute them on GitHub\n"
         "\n"
+        "--display picks the display by (part of) its name or its UUID; without it, the\n"
+        "only external display is used.\n"
         "A profile <spec> is either a path to an .icc/.icm file or (part of) the\n"
         "profile's name as shown in System Settings > Displays > Color profile.\n");
     exit(code);
@@ -80,17 +82,17 @@ static NSURL *resolveProfile(NSString *spec) {
     return url;
 }
 
-static IOAVServiceRef findAVService(NSString *needle, NSDictionary **outAttrs) {
+static IOAVServiceRef findAVService(CGDirectDisplayID d, NSDictionary **outAttrs) {
     NSString *err = nil;
-    IOAVServiceRef av = HCFindAVService(needle, outAttrs, &err);
+    IOAVServiceRef av = HCFindAVService(d, outAttrs, &err);
     if (!av) die(@"%@", err);
     return av;
 }
 
 // The DB entry for the connected monitor, or prints "monitor unknown" and exits. Call before any change.
-static NSDictionary *requireMonitor(IOAVServiceRef av, NSDictionary *attrs) {
+static NSDictionary *requireMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString *uuid) {
     NSString *why = nil, *err = nil;
-    NSDictionary *entry = HCFindMonitor(av, attrs, &why, &err);
+    NSDictionary *entry = HCFindMonitor(av, attrs, uuid, &why, &err);
     if (entry) return entry;
     if (err) die(@"%@", err);
     fprintf(stderr, "monitor unknown: %s — not changing anything\n", why.UTF8String);
@@ -118,7 +120,8 @@ static uint16_t levelValue(NSDictionary<NSString *, NSNumber *> *levels, NSStrin
 }
 
 static void printStatus(CGDirectDisplayID d, NSString *name) {
-    say(@"%@  (id %u)", name, d);
+    say(@"%@  (id %u%@)", name, d, CGDisplayIsBuiltin(d) ? @", built-in" : @"");
+    say(@"  UUID:          %@", HCDisplayUUID(d));
     say(@"  HDR supported: %@", HCSupportsHDR(d) ? @"yes" : @"no");
     say(@"  HDR enabled:   %@", HCIsHDR(d) ? @"on" : @"off");
     say(@"  Color profile: %@", HCCurrentProfile(d));
@@ -174,10 +177,10 @@ static NSString *askLevel(NSString *prompt, NSArray<NSString *> *names, NSString
     }
 }
 
-static int detect(NSString *needle) {
+static int detect(CGDirectDisplayID d) {
     NSString *err = nil, *why = nil;
     NSDictionary *attrs = nil;
-    IOAVServiceRef av = findAVService(needle, &attrs);
+    IOAVServiceRef av = findAVService(d, &attrs);
     NSDictionary *identity = HCReadIdentityValues(av, attrs, &why);
     if (!identity) die(@"%@", why);
     NSString *hash = HCSHA256Hex(HCIdentityJSON(identity));
@@ -285,7 +288,7 @@ static int detect(NSString *needle) {
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        NSString *needle = @"M27P6S";
+        NSString *needle = nil;   // the only external display
         NSString *hdrSpec = @"Rec. ITU-R BT.2020-1";
         NSString *sdrSpec = @"Display P3";
         NSMutableArray<NSString *> *args = [NSMutableArray array];
@@ -310,10 +313,22 @@ int main(int argc, const char *argv[]) {
         for (NSString *line in HCMigrateToolDirectoryFiles()) say(@"%@", line);
         NSString *err = nil, *why = nil;
 
+        if ([cmd isEqualToString:@"list"]) {
+            if (!HCLoadSkyLight(&err)) die(@"%@", err);
+            NSArray *ds = HCAllDisplays();
+            if (ds.count == 0) say(@"no displays found");
+            for (NSDictionary *d in ds) printStatus([d[@"id"] unsignedIntValue], d[@"name"]);
+            return 0;
+        }
+
+        NSString *name = nil;
+        CGDirectDisplayID d = HCFindDisplay(needle, &name, &err);
+        if (!d) die(@"%@", err);
+        NSString *uuid = HCDisplayUUID(d);
+
         if ([cmd isEqualToString:@"ddc"] && args.count >= 2) {
             NSDictionary *attrs = nil;
-            IOAVServiceRef av = HCFindAVService(needle, &attrs, &err);
-            if (!av) die(@"%@", err);
+            IOAVServiceRef av = findAVService(d, &attrs);
             NSString *sub = args[1];
             uint16_t cur, max;
             if ([sub isEqualToString:@"dump"]) {
@@ -327,7 +342,7 @@ int main(int argc, const char *argv[]) {
                 // Only the local dimming levels monitor_db.json lists for this monitor can be written.
                 unsigned c = parseNum(args[2]), v = parseNum(args[3]);
                 NSDictionary<NSString *, NSNumber *> *levels = nil;
-                uint8_t code = localDimming(requireMonitor(av, attrs), &levels);
+                uint8_t code = localDimming(requireMonitor(av, attrs, uuid), &levels);
                 NSString *label = c == code ? HCLevelName(levels, v) : nil;
                 if (!label) {
                     NSMutableArray *ok = [NSMutableArray array];
@@ -341,22 +356,22 @@ int main(int argc, const char *argv[]) {
             return 0;
         }
 
-        if ([cmd isEqualToString:@"detect"]) return detect(needle);
+        if ([cmd isEqualToString:@"detect"]) return detect(d);
 
         if ([cmd isEqualToString:@"identify"]) {
             NSDictionary *attrs = nil;
-            IOAVServiceRef av = HCFindAVService(needle, &attrs, &err);
-            if (!av) die(@"%@", err);
+            IOAVServiceRef av = findAVService(d, &attrs);
             NSDictionary *live = HCReadIdentityValues(av, attrs, &why);
             if (!live) die(@"%@", why);
             NSString *identity = HCIdentityJSON(live), *hash = HCSHA256Hex(identity);
             if ([args containsObject:@"--save"]) {
-                if (!HCSaveMyMonitor(live, &err)) die(@"couldn't write %@: %@", HCMyMonitorPath(), err);
+                if (!HCSaveMyMonitor(uuid, live, &err)) die(@"couldn't write %@: %@", HCMyMonitorPath(), err);
                 say(@"Saved %@", HCMyMonitorPath());
             } else {
-                HCEnsureMyMonitor(live);
+                HCEnsureMyMonitor(uuid, live);
             }
-            NSString *mineWhy = nil, *mine = HCReadMyMonitor(NULL, &mineWhy);
+            NSString *mineWhy = nil, *mine = HCReadMyMonitor(uuid, NULL, &mineWhy);
+            say(@"Display:         %@  (UUID %@)", name, uuid);
             say(@"Identity:        %@", identity);
             say(@"Hash:            %@", hash);
             NSDictionary *db = HCLoadDB(&err);
@@ -374,23 +389,11 @@ int main(int argc, const char *argv[]) {
 
         if (!HCLoadSkyLight(&err)) die(@"%@", err);
 
-        if ([cmd isEqualToString:@"list"]) {
-            NSArray *ds = HCAllDisplays();
-            if (ds.count == 0) say(@"no displays found");
-            for (NSDictionary *d in ds) printStatus([d[@"id"] unsignedIntValue], d[@"name"]);
-            return 0;
-        }
-
-        NSString *name = nil;
-        CGDirectDisplayID d = HCFindDisplay(needle, &name, &err);
-        if (!d) die(@"%@", err);
-
         if ([cmd isEqualToString:@"status"]) {
             printStatus(d, name);
             NSDictionary *attrs = nil;
-            IOAVServiceRef av = HCFindAVService(needle, &attrs, &err);
-            if (!av) die(@"%@", err);
-            NSDictionary *entry = HCFindMonitor(av, attrs, &why, &err);   // read only, so an unknown monitor isn't an error
+            IOAVServiceRef av = findAVService(d, &attrs);
+            NSDictionary *entry = HCFindMonitor(av, attrs, uuid, &why, &err);   // read only, so an unknown monitor isn't an error
             if (!entry && err) die(@"%@", err);
             NSDictionary<NSString *, NSNumber *> *levels = nil;
             uint8_t code = entry ? localDimming(entry, &levels) : 0;
@@ -403,9 +406,9 @@ int main(int argc, const char *argv[]) {
                    ([cmd isEqualToString:@"toggle"] && !HCIsHDR(d))) {
             NSURL *p = resolveProfile(hdrSpec);          // resolve and verify first, so we fail before switching
             NSDictionary *attrs = nil;
-            IOAVServiceRef av = findAVService(needle, &attrs);
+            IOAVServiceRef av = findAVService(d, &attrs);
             NSDictionary<NSString *, NSNumber *> *levels = nil;
-            NSDictionary *entry = requireMonitor(av, attrs);
+            NSDictionary *entry = requireMonitor(av, attrs, uuid);
             uint8_t code = localDimming(entry, &levels);
             NSString *levelName = hdrLevel(entry, YES);
             uint16_t level = levelValue(levels, levelName);
@@ -416,9 +419,9 @@ int main(int argc, const char *argv[]) {
         } else if ([cmd isEqualToString:@"off"] || [cmd isEqualToString:@"toggle"]) {
             NSURL *p = resolveProfile(sdrSpec);
             NSDictionary *attrs = nil;
-            IOAVServiceRef av = findAVService(needle, &attrs);
+            IOAVServiceRef av = findAVService(d, &attrs);
             NSDictionary<NSString *, NSNumber *> *levels = nil;
-            NSDictionary *entry = requireMonitor(av, attrs);
+            NSDictionary *entry = requireMonitor(av, attrs, uuid);
             uint8_t code = localDimming(entry, &levels);
             NSString *levelName = hdrLevel(entry, NO);
             uint16_t level = levelValue(levels, levelName);

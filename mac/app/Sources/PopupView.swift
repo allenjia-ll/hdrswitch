@@ -1,16 +1,64 @@
-// The popup's contents, laid out like Control Center's Displays popup: the monitor's name with a
-// refresh button, an HDR switch and the color profile and local dimming dropdowns, a divider, and
-// Settings and Quit rows.
+// The popup's contents, laid out like Control Center's Displays popup: for each external monitor, its
+// name, an HDR switch and the color profile and local dimming dropdowns (a refresh button by the
+// first name refreshes them all); then a divider, and Settings and Quit rows.
 
 import AppKit
 import SwiftUI
 
 struct PopupView: View {
-    @ObservedObject var model: MonitorModel
+    @ObservedObject var displays: DisplayList
     let openSettings: () -> Void
     private let settingsRowHover = HoverState()
     private let quitRowHover = HoverState()
     @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if displays.monitors.isEmpty {
+                HStack {
+                    Text("No external display connected")
+                        .font(.system(size: 13, weight: .bold))
+                    Spacer()
+                    RefreshButton(busy: false, refresh: displays.refresh)
+                }
+                .frame(height: 18)
+            }
+            ForEach(Array(displays.monitors.enumerated()), id: \.element.uuid) { i, monitor in
+                MonitorSection(model: monitor, refresh: i == 0 ? displays.refresh : nil)
+                    .padding(.top, i == 0 ? 0 : 16)
+            }
+            Divider()
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+            // As in the design: "⚙ Settings…", a divider, then "Quit HDR Switch". The rows' text lines up
+            // with the title, and their hover highlight extends past it.
+            MenuRow(title: "Settings…", systemImage: "gearshape", hover: settingsRowHover, action: openSettings)
+                .padding(.horizontal, -8)
+            Divider()
+                .padding(.vertical, 6)
+            MenuRow(title: "Quit HDR Switch", hover: quitRowHover) { NSApp.terminate(nil) }
+                .padding(.horizontal, -8)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+        .frame(width: 330)   // room for "Rec. ITU-R BT.2020-1" beside the labels, in the panels
+        // In light mode the popup is near white with gray panels on it, as in System Settings; in dark
+        // mode the panels are the lighter ones, as System Settings does there.
+        .background(Color.white.opacity(colorScheme == .dark ? 0 : 0.6))
+        .background(VisualEffect())
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+    }
+}
+
+// One monitor: its name, two panels as in System Settings > Displays (HDR, then the color profile
+// and local dimming), and a warning if something went wrong. A spinner by the name while it's busy;
+// otherwise the refresh button, if given.
+struct MonitorSection: View {
+    @ObservedObject var model: MonitorModel
+    let refresh: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -25,26 +73,12 @@ struct PopupView: View {
                               + "profile, and won't touch the monitor's local dimming setting.")
                 }
                 Spacer()
-                if model.busy {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.7)
-                        .frame(width: 18, height: 18)
-                } else {
-                    Button(action: model.refresh) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .semibold))
-                            .frame(width: 18, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.secondary)
-                    .help("Refresh")
+                if model.busy || refresh != nil {
+                    RefreshButton(busy: model.busy, refresh: refresh ?? {})
                 }
             }
             .frame(height: 18)
             .padding(.bottom, 12)
-            // Two panels, as in System Settings > Displays: HDR, then the color profile and local dimming.
             Panel {
                 SettingRow(label: "HDR") { HDRSwitch(model: model) }
             }
@@ -77,29 +111,32 @@ struct PopupView: View {
                 .font(.system(size: 11))
                 .padding(.top, 10)
             }
-            Divider()
-                .padding(.top, 12)
-                .padding(.bottom, 6)
-            // As in the design: "⚙ Settings…", a divider, then "Quit HDR Switch". The rows' text lines up
-            // with the title, and their hover highlight extends past it.
-            MenuRow(title: "Settings…", systemImage: "gearshape", hover: settingsRowHover, action: openSettings)
-                .padding(.horizontal, -8)
-            Divider()
-                .padding(.vertical, 6)
-            MenuRow(title: "Quit HDR Switch", hover: quitRowHover) { NSApp.terminate(nil) }
-                .padding(.horizontal, -8)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 8)
-        .frame(width: 330)   // room for "Rec. ITU-R BT.2020-1" beside the labels, in the panels
-        // In light mode the popup is near white with gray panels on it, as in System Settings; in dark
-        // mode the panels are the lighter ones, as System Settings does there.
-        .background(Color.white.opacity(colorScheme == .dark ? 0 : 0.6))
-        .background(VisualEffect())
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+    }
+}
+
+// The refresh button, or a spinner in its place while busy.
+struct RefreshButton: View {
+    let busy: Bool
+    let refresh: () -> Void
+
+    var body: some View {
+        if busy {
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.7)
+                .frame(width: 18, height: 18)
+        } else {
+            Button(action: refresh) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
+            .help("Refresh")
+        }
     }
 }
 

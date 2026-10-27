@@ -41,9 +41,15 @@ BOOL HCSetHDR(CGDirectDisplayID d, BOOL on, NSString **error);
 
 // --------------------------------------------------------------- displays --
 
-NSArray<NSDictionary *> *HCAllDisplays(void);   // @{ @"id": NSNumber, @"name": NSString }
-// Exactly one display whose name contains needle (case-insensitive), or 0 with *error set.
-CGDirectDisplayID HCFindDisplay(NSString *needle, NSString **outName, NSString **error);
+// A display's UUID is the one macOS keeps for each monitor: it stays the same across reconnects and
+// restarts. Two identical monitors (same EDID, no serial number) may share one.
+NSString *HCDisplayUUID(CGDirectDisplayID d);
+// @{ @"id": NSNumber, @"name": NSString, @"uuid": NSString, @"builtin": NSNumber (BOOL) }. Names come
+// from NSScreen, so call on the main thread.
+NSArray<NSDictionary *> *HCAllDisplays(void);
+// The display whose UUID is spec or whose name contains it (case-insensitive), or with spec nil the
+// only external display. Exactly one, or 0 with *error set.
+CGDirectDisplayID HCFindDisplay(NSString *spec, NSString **outName, NSString **error);
 
 // --------------------------------------------------------------- profiles --
 
@@ -57,9 +63,10 @@ BOOL HCSetProfile(CGDirectDisplayID d, NSURL *url, NSString **error);
 // -------------------------------------------------------------------- DDC --
 
 typedef CFTypeRef IOAVServiceRef;
-// The DDC/CI service of the external display whose name contains needle, or NULL with *error set.
-// outAttrs gets the display's EDID ProductAttributes. Release the service with CFRelease.
-IOAVServiceRef HCFindAVService(NSString *needle, NSDictionary **outAttrs, NSString **error);
+// The DDC/CI service of external display d, or NULL with *error set. It's matched by the framebuffer
+// (port) the display is on, so identical monitors get the right one. outAttrs gets the display's
+// EDID ProductAttributes. Release the service with CFRelease.
+IOAVServiceRef HCFindAVService(CGDirectDisplayID d, NSDictionary **outAttrs, NSString **error);
 // Every DDC call gives up after 3 s (a sleeping monitor never answers), logging one warning. A
 // service with a timed-out call still running fails at once; a new one from HCFindAVService works.
 // HCDDCDidTimeOut says whether a call timed out since HCDDCClearTimeout.
@@ -75,8 +82,11 @@ BOOL HCDDCGet(IOAVServiceRef av, uint8_t code, uint16_t *cur, uint16_t *max);
 // monitor_db.json maps that hash to the identity and the monitor's DDC settings; it ships with the
 // tool (next to hdrctl, or in the app). local_monitor_db.json, in the data folder, has the same
 // format and holds monitors detected on this Mac; its entries override the shipped ones. my_monitor.json
-// holds the monitor set up on this Mac, as { "<hash>": { "identity": { ... } } }. Before any DDC
-// write, the connected monitor is read, hashed, and must match my_monitor.json and be in the DB.
+// holds the monitors set up on this Mac, by display UUID:
+//   { "<display UUID>": { "hash": "<hash>", "identity": { ... } }, ... }
+// Before any DDC write, the monitor is read, hashed, and must match its display's entry in
+// my_monitor.json and be in the DB. (Up to 0.2.1 the file held one monitor, keyed by its hash; it's
+// converted when that monitor is next seen.)
 
 // The connected monitor's identity values (the keys above), or nil with *why set if one can't be read.
 NSDictionary *HCReadIdentityValues(IOAVServiceRef av, NSDictionary *attrs, NSString **why);
@@ -90,20 +100,25 @@ NSString *HCLocalDBPath(void);
 NSDictionary *HCLoadLocalDB(NSString **error);   // just local_monitor_db.json, @{} if it doesn't exist
 NSString *HCPrettyJSON(id object);                // indented, sorted keys
 NSString *HCMyMonitorPath(void);
-// The hash in my_monitor.json (with its identity in *identity), or nil with *why set if the file
-// is missing or invalid, including when its key isn't the hash of its identity section.
-NSString *HCReadMyMonitor(NSDictionary **identity, NSString **why);
-// Writes my_monitor.json for this identity and removes an old one-line my_monitor file.
-BOOL HCSaveMyMonitor(NSDictionary *identity, NSString **error);
-// If my_monitor.json doesn't exist, creates it for this identity (replacing an old one-line
-// my_monitor) and logs an info line.
-void HCEnsureMyMonitor(NSDictionary *identity);
-// The DB entry for the connected monitor, if it matches my_monitor.json and is in monitor_db.json.
-// Creates my_monitor.json first if it doesn't exist (see HCEnsureMyMonitor).
+// The hash my_monitor.json has for this display (with its identity in *identity), or nil with *why
+// set if there's none or it's invalid, including when its hash isn't the hash of its identity.
+// An old one-monitor file answers for every display.
+NSString *HCReadMyMonitor(NSString *uuid, NSDictionary **identity, NSString **why);
+// The displays my_monitor.json has a monitor for: display UUID -> identity (none for an old
+// one-monitor file, which has no UUID).
+NSDictionary<NSString *, NSDictionary *> *HCMyMonitors(void);
+// Sets this display's entry in my_monitor.json, keeping the other displays' (an old one-monitor file
+// is replaced), and removes an old one-line my_monitor file.
+BOOL HCSaveMyMonitor(NSString *uuid, NSDictionary *identity, NSString **error);
+// If my_monitor.json has no entry for this display, adds one for this identity and logs an info line.
+// An old one-monitor file for this identity is converted; one for another monitor is left alone.
+void HCEnsureMyMonitor(NSString *uuid, NSDictionary *identity);
+// The DB entry for the monitor on this display, if it matches the display's entry in my_monitor.json
+// and is in monitor_db.json. Adds the entry first if there's none (see HCEnsureMyMonitor).
 // Otherwise nil, with *why set (monitor unknown) or *error set (monitor_db.json is invalid).
-NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString **why, NSString **error);
+NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString *uuid, NSString **why, NSString **error);
 // The same, for identity values already read with HCReadIdentityValues.
-NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString **why, NSString **error);
+NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString *uuid, NSString **why, NSString **error);
 // The local dimming VCP code from a DB entry, with its levels (name -> value) in *levels,
 // or -1 with *error set if the entry is malformed.
 int HCLocalDimming(NSDictionary *entry, NSDictionary<NSString *, NSNumber *> **levels, NSString **error);

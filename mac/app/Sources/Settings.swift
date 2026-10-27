@@ -9,82 +9,105 @@ struct SettingRule: Equatable {
     var value: String
 }
 
-// Saved per user in the app's preferences. The defaults are what hdrctl on/off do. Local dimming
-// levels are stored by their monitor_db.json name ("off", "standard").
+// Saved per user in the app's preferences, for each monitor by its display UUID. The defaults are
+// what hdrctl on/off do. Local dimming levels are stored by their monitor_db.json name ("off", "standard").
 enum Preferences {
-    static var onProfile: SettingRule {
-        get { load("hdrOn", "Profile", default: SettingRule(enabled: true, value: "Rec. ITU-R BT.2020-1")) }
-        set { save(newValue, "hdrOn", "Profile") }
-    }
-    static var offProfile: SettingRule {
-        get { load("hdrOff", "Profile", default: SettingRule(enabled: true, value: "Display P3")) }
-        set { save(newValue, "hdrOff", "Profile") }
-    }
-    static var onDimming: SettingRule {
-        get { load("hdrOn", "Dimming", default: SettingRule(enabled: true, value: "standard")) }
-        set { save(newValue, "hdrOn", "Dimming") }
-    }
-    static var offDimming: SettingRule {
-        get { load("hdrOff", "Dimming", default: SettingRule(enabled: true, value: "off")) }
-        set { save(newValue, "hdrOff", "Dimming") }
+    enum Rule {
+        case onProfile, offProfile, onDimming, offDimming
+
+        // Keys: <UUID>.hdrOnSetProfile / <UUID>.hdrOnProfile, …SetDimming / …Dimming, and the same for hdrOff.
+        fileprivate var state: String { self == .onProfile || self == .onDimming ? "hdrOn" : "hdrOff" }
+        fileprivate var what: String { self == .onProfile || self == .offProfile ? "Profile" : "Dimming" }
+        fileprivate var fallback: SettingRule {
+            switch self {
+            case .onProfile: return SettingRule(enabled: true, value: "Rec. ITU-R BT.2020-1")
+            case .offProfile: return SettingRule(enabled: true, value: "Display P3")
+            case .onDimming: return SettingRule(enabled: true, value: "standard")
+            case .offDimming: return SettingRule(enabled: true, value: "off")
+            }
+        }
     }
 
-    static func profile(hdrOn: Bool) -> SettingRule { hdrOn ? onProfile : offProfile }
-    static func dimming(hdrOn: Bool) -> SettingRule { hdrOn ? onDimming : offDimming }
-
-    // Keys: hdrOnSetProfile / hdrOnProfile, hdrOnSetDimming / hdrOnDimming, and the same for hdrOff.
-    private static func load(_ state: String, _ what: String, default rule: SettingRule) -> SettingRule {
+    // A monitor without its own settings gets those saved without a UUID, which held the one
+    // monitor's settings up to 0.2.1, then the defaults.
+    static func get(_ rule: Rule, uuid: String) -> SettingRule {
         let d = UserDefaults.standard
-        return SettingRule(enabled: d.object(forKey: state + "Set" + what) as? Bool ?? rule.enabled,
-                           value: d.string(forKey: state + what) ?? rule.value)
+        func value<T>(_ key: String) -> T? { d.object(forKey: uuid + "." + key) as? T ?? d.object(forKey: key) as? T }
+        return SettingRule(enabled: value(rule.state + "Set" + rule.what) ?? rule.fallback.enabled,
+                           value: value(rule.state + rule.what) ?? rule.fallback.value)
     }
 
-    private static func save(_ rule: SettingRule, _ state: String, _ what: String) {
-        UserDefaults.standard.set(rule.enabled, forKey: state + "Set" + what)
-        UserDefaults.standard.set(rule.value, forKey: state + what)
+    static func set(_ rule: Rule, uuid: String, _ value: SettingRule) {
+        UserDefaults.standard.set(value.enabled, forKey: uuid + "." + rule.state + "Set" + rule.what)
+        UserDefaults.standard.set(value.value, forKey: uuid + "." + rule.state + rule.what)
     }
+
+    static func profile(hdrOn: Bool, uuid: String) -> SettingRule { get(hdrOn ? .onProfile : .offProfile, uuid: uuid) }
+    static func dimming(hdrOn: Bool, uuid: String) -> SettingRule { get(hdrOn ? .onDimming : .offDimming, uuid: uuid) }
 }
 
 // The settings window's state. Each change is saved right away, as in macOS's own Settings windows;
 // nothing applies until the next HDR switch. A class rather than @State (see HoverState).
 final class SettingsModel: ObservableObject {
-    @Published var onProfile = Preferences.onProfile { didSet { if !loading { Preferences.onProfile = onProfile } } }
-    @Published var offProfile = Preferences.offProfile { didSet { if !loading { Preferences.offProfile = offProfile } } }
-    @Published var onDimming = Preferences.onDimming { didSet { if !loading { Preferences.onDimming = onDimming } } }
-    @Published var offDimming = Preferences.offDimming { didSet { if !loading { Preferences.offDimming = offDimming } } }
-    private var loading = false   // reload() shows the saved values without writing them back
+    struct Monitor: Equatable {
+        let uuid: String
+        let title: String   // the name, with part of the UUID if another monitor has the same one
+    }
+
+    @Published var onProfile = SettingRule(enabled: false, value: "") { didSet { save(.onProfile, onProfile) } }
+    @Published var offProfile = SettingRule(enabled: false, value: "") { didSet { save(.offProfile, offProfile) } }
+    @Published var onDimming = SettingRule(enabled: false, value: "") { didSet { save(.onDimming, onDimming) } }
+    @Published var offDimming = SettingRule(enabled: false, value: "") { didSet { save(.offDimming, offDimming) } }
+    private var loading = false   // showing the saved values, without writing them back
+    @Published private(set) var monitors: [Monitor] = []   // connected first, then the others set up on this Mac
+    @Published private(set) var selected = ""               // the UUID of the monitor shown
     @Published private(set) var profiles: [String] = []
-    @Published private(set) var levels: [String] = []   // the set-up monitor's levels, by value
+    @Published private(set) var levels: [String] = []   // the selected monitor's levels, by value
     @Published private(set) var hasDetected = false      // local_monitor_db.json exists
-    @Published private(set) var monitorName = MonitorModel.displayName   // the monitor these settings are for
 
-    // Shows the saved settings.
+    var selectedTitle: String { monitors.first { $0.uuid == selected }?.title ?? "No monitor" }
+
+    // Shows the saved settings, for the same monitor as before if it's still listed.
     func reload() {
-        loading = true
-        onProfile = Preferences.onProfile
-        offProfile = Preferences.offProfile
-        onDimming = Preferences.onDimming
-        offDimming = Preferences.offDimming
-        loading = false
+        monitors = Self.listMonitors()
         profiles = HCListProfiles().compactMap { $0["name"] as? String }
-        levels = Self.setUpMonitorLevels()
-        hasDetected = Self.hasDetectedMonitors()
-        monitorName = Self.setUpMonitorName()
+        select(monitors.contains { $0.uuid == selected } ? selected : monitors.first?.uuid ?? "")
     }
 
-    // After a detection is saved or deleted: the set-up monitor's levels may have changed.
+    func select(_ uuid: String) {
+        selected = uuid
+        loading = true
+        onProfile = Preferences.get(.onProfile, uuid: uuid)
+        offProfile = Preferences.get(.offProfile, uuid: uuid)
+        onDimming = Preferences.get(.onDimming, uuid: uuid)
+        offDimming = Preferences.get(.offDimming, uuid: uuid)
+        loading = false
+        reloadLevels()
+    }
+
+    // After a detection is saved or deleted: the selected monitor's levels may have changed.
     func reloadLevels() {
-        levels = Self.setUpMonitorLevels()
+        levels = Self.levels(uuid: selected)
         hasDetected = Self.hasDetectedMonitors()
-        monitorName = Self.setUpMonitorName()
     }
 
-    // The monitor in my_monitor.json, or the display the app looks for if none is set up yet.
-    private static func setUpMonitorName() -> String {
-        var identity: NSDictionary?, why: NSString?
-        guard HCReadMyMonitor(&identity, &why) != nil, let name = identity?["product_name"] as? String, !name.isEmpty
-        else { return MonitorModel.displayName }
-        return name
+    private func save(_ rule: Preferences.Rule, _ value: SettingRule) {
+        if !loading && !selected.isEmpty { Preferences.set(rule, uuid: selected, value) }
+    }
+
+    // The connected external displays, then the monitors in my_monitor.json that aren't connected.
+    private static func listMonitors() -> [Monitor] {
+        var named: [(uuid: String, name: String)] = HCAllDisplays().compactMap { d in
+            guard !((d["builtin"] as? Bool) ?? false), let uuid = d["uuid"] as? String, !uuid.isEmpty else { return nil }
+            return (uuid, d["name"] as? String ?? "Display")
+        }
+        for (uuid, identity) in HCMyMonitors().sorted(by: { $0.key < $1.key }) where !named.contains(where: { $0.uuid == uuid }) {
+            named.append((uuid, identity["product_name"] as? String ?? "Monitor"))
+        }
+        return named.map { m in
+            let shared = named.filter { $0.name == m.name }.count > 1
+            return Monitor(uuid: m.uuid, title: shared ? "\(m.name) (\(m.uuid.prefix(8)))" : m.name)
+        }
     }
 
     // The file exists, even if it's damaged or empty: the viewer says so.
@@ -93,11 +116,11 @@ final class SettingsModel: ObservableObject {
         return FileManager.default.fileExists(atPath: path)
     }
 
-    // The local dimming levels in monitor_db.json for the monitor in my_monitor.json. No DDC, so
-    // it's instant; empty if no supported monitor is set up yet.
-    private static func setUpMonitorLevels() -> [String] {
+    // The local dimming levels in monitor_db.json for the monitor my_monitor.json has on this display.
+    // No DDC, so it's instant; empty if that monitor isn't set up yet or isn't supported.
+    private static func levels(uuid: String) -> [String] {
         var why: NSString?, err: NSString?, levels: NSDictionary?
-        guard let hash = HCReadMyMonitor(nil, &why) as String?,
+        guard !uuid.isEmpty, let hash = HCReadMyMonitor(uuid, nil, &why) as String?,
               let entry = HCLoadDB(&err)?[hash] as? [AnyHashable: Any],
               HCLocalDimming(entry, &levels, &err) >= 0,
               let named = levels as? [String: NSNumber] else { return [] }
@@ -182,12 +205,32 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(model.monitorName)   // the settings below are for this monitor
-                .font(.system(size: 13, weight: .bold))
-            Section(title: "When HDR is turned on", profile: $model.onProfile, dimming: $model.onDimming, model: model)
-            Section(title: "When HDR is turned off", profile: $model.offProfile, dimming: $model.offDimming, model: model)
-            if model.levels.isEmpty {
-                Text("Local dimming isn't available: no supported monitor is set up yet. Open the HDR Switch menu with your monitor connected first.")
+            // The settings below are for this monitor; with more than one, a menu chooses it.
+            if model.monitors.count > 1 {
+                HStack {
+                    Text("Monitor")
+                        .font(.system(size: 13, weight: .bold))
+                    Spacer()
+                    Dropdown(options: model.monitors.map { $0.title }, selection: model.selectedTitle,
+                             select: { title in
+                                 if let m = model.monitors.first(where: { $0.title == title }) { model.select(m.uuid) }
+                             })
+                }
+            } else {
+                Text(model.selectedTitle)
+                    .font(.system(size: 13, weight: .bold))
+            }
+            Group {
+                Section(title: "When HDR is turned on", profile: $model.onProfile, dimming: $model.onDimming, model: model)
+                Section(title: "When HDR is turned off", profile: $model.offProfile, dimming: $model.offDimming, model: model)
+            }
+            .disabled(model.selected.isEmpty)
+            if model.selected.isEmpty {
+                Text("Connect a monitor to choose its settings.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            } else if model.levels.isEmpty {
+                Text("Local dimming isn't available: this monitor isn't supported, or hasn't been set up yet. Open the HDR Switch menu with it connected, or use Detect Monitor below.")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -203,6 +246,7 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer()
                         Button("Detect Monitor…", action: detect)
+                            .disabled(model.selected.isEmpty)
                     }
                     // Only when there's a local_monitor_db.json. The window refits when this appears or goes.
                     if model.hasDetected {

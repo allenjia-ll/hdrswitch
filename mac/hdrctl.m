@@ -305,6 +305,9 @@ int main(int argc, const char *argv[]) {
             if (level == HCLogWarning) fprintf(stderr, "warning: %s\n", message.UTF8String);
             else say(@"%@", message);
         });
+        // my_monitor.json and local_monitor_db.json are in ~/Library/Application Support/HDR Switch,
+        // shared with the app; move older copies from next to hdrctl there once.
+        for (NSString *line in HCMigrateToolDirectoryFiles()) say(@"%@", line);
         NSString *err = nil, *why = nil;
 
         if ([cmd isEqualToString:@"ddc"] && args.count >= 2) {
@@ -363,6 +366,9 @@ int main(int argc, const char *argv[]) {
             say(@"monitor_db.json: %@", local[hash] ? @"listed (local_monitor_db.json, from hdrctl detect)"
                                         : db[hash] ? @"listed" : @"not listed (to add it: hdrctl detect)");
             say(@"my_monitor.json: %@", !mine ? mineWhy : [mine isEqualToString:hash] ? @"matches" : @"different monitor");
+            say(@"Data folder:     %@", HCDataDirectory());
+            for (NSString *old in HCToolDirectoryLeftovers())
+                say(@"note: ignoring %@; the copy in the data folder is used (delete it to tidy up)", old);
             return 0;
         }
 

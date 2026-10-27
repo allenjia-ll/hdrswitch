@@ -41,12 +41,21 @@ static NSString *gDataDir;
 
 void HCSetDataDirectory(NSString *dir) { gDataDir = dir; }
 
-NSString *HCDataDirectory(void) {
-    if (gDataDir) return gDataDir;
+NSString *HCToolDirectory(void) {
     char exe[PATH_MAX], real[PATH_MAX];
     uint32_t size = sizeof exe;
     if (_NSGetExecutablePath(exe, &size) != 0 || !realpath(exe, real)) return nil;
     return @(real).stringByDeletingLastPathComponent;
+}
+
+NSString *HCDataDirectory(void) {
+    if (gDataDir) return gDataDir;
+    NSURL *base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                       inDomains:NSUserDomainMask].firstObject;
+    if (!base) return nil;
+    NSString *dir = [base.path stringByAppendingPathComponent:@"HDR Switch"];
+    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+    return dir;
 }
 
 static NSString *dataPath(NSString *name) { return [HCDataDirectory() stringByAppendingPathComponent:name]; }
@@ -54,6 +63,38 @@ static NSString *dataPath(NSString *name) { return [HCDataDirectory() stringByAp
 static NSString *gDBPath;
 
 void HCSetDBPath(NSString *path) { gDBPath = path; }
+
+// Before 0.1.9 the CLI kept these next to hdrctl.
+static NSArray<NSString *> *toolDirectoryFiles(void) { return @[ @"my_monitor.json", @"my_monitor", @"local_monitor_db.json" ]; }
+
+NSArray<NSString *> *HCMigrateToolDirectoryFiles(void) {
+    NSString *from = HCToolDirectory(), *to = HCDataDirectory();
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSMutableArray *moved = [NSMutableArray array];
+    if (!from || !to || [from.stringByStandardizingPath isEqualToString:to.stringByStandardizingPath]) return moved;
+    for (NSString *name in toolDirectoryFiles()) {
+        NSString *old = [from stringByAppendingPathComponent:name], *new = [to stringByAppendingPathComponent:name];
+        if (![fm fileExistsAtPath:old] || [fm fileExistsAtPath:new]) continue;
+        NSError *err = nil;
+        if ([fm moveItemAtPath:old toPath:new error:&err])
+            [moved addObject:[NSString stringWithFormat:@"Moved %@ to %@ (shared with the HDR Switch app)", old, new]];
+        else
+            logWarn(@"couldn't move %@ to %@: %@", old, new, err.localizedDescription);
+    }
+    return moved;
+}
+
+NSArray<NSString *> *HCToolDirectoryLeftovers(void) {
+    NSString *from = HCToolDirectory(), *to = HCDataDirectory();
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSMutableArray *left = [NSMutableArray array];
+    if (!from || !to || [from.stringByStandardizingPath isEqualToString:to.stringByStandardizingPath]) return left;
+    for (NSString *name in toolDirectoryFiles()) {
+        NSString *old = [from stringByAppendingPathComponent:name];
+        if ([fm fileExistsAtPath:old] && [fm fileExistsAtPath:[to stringByAppendingPathComponent:name]]) [left addObject:old];
+    }
+    return left;
+}
 
 // --------------------------------------------------------------- SkyLight --
 
@@ -447,7 +488,7 @@ NSString *HCLocalDBPath(void) { return dataPath(@"local_monitor_db.json"); }
 NSDictionary *HCLoadLocalDB(NSString **error) { return loadJSONObject(HCLocalDBPath(), error); }
 
 NSDictionary *HCLoadDB(NSString **error) {
-    NSDictionary *shipped = loadJSONObject(gDBPath ?: dataPath(@"monitor_db.json"), error);
+    NSDictionary *shipped = loadJSONObject(gDBPath ?: [HCToolDirectory() stringByAppendingPathComponent:@"monitor_db.json"], error);
     NSDictionary *local = shipped ? HCLoadLocalDB(error) : nil;
     if (!local) return nil;
     NSMutableDictionary *db = [shipped mutableCopy];
@@ -508,7 +549,7 @@ NSDictionary *HCSaveLocalMonitor(NSDictionary *identity, uint8_t code, NSArray<N
                                  NSString *hdrOn, NSString *hdrOff, NSDictionary *report, NSString **error) {
     NSString *canonical = HCIdentityJSON(identity), *path = HCLocalDBPath();
     if (!canonical) { fail(error, @"incomplete identity"); return nil; }
-    if (!path) { fail(error, @"can't find hdrctl's own folder"); return nil; }
+    if (!path) { fail(error, @"can't find the data folder (~/Library/Application Support/HDR Switch)"); return nil; }
     NSDictionary *existing = HCLoadLocalDB(error);
     if (!existing) return nil;
     NSDictionary *entry = HCMakeLocalMonitorEntry(identity, code, levels, hdrOn, hdrOff, report);
@@ -554,7 +595,7 @@ NSString *HCReadMyMonitor(NSDictionary **identity, NSString **why) {
 BOOL HCSaveMyMonitor(NSDictionary *identity, NSString **error) {
     NSString *canonical = HCIdentityJSON(identity), *path = HCMyMonitorPath();
     if (!canonical) return fail(error, @"incomplete identity");
-    if (!path) return fail(error, @"can't find hdrctl's own folder");
+    if (!path) return fail(error, @"can't find the data folder (~/Library/Application Support/HDR Switch)");
     NSMutableArray *rows = [NSMutableArray array];
     for (NSString *k in identityKeys()) {
         id v = identity[k];

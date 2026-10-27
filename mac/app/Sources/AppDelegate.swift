@@ -16,11 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let monitor = MonitorModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // monitor_db.json ships in the app; my_monitor.json is per user, in Application Support.
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("HDR Switch", isDirectory: true)
-        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-        HCSetDataDirectory(support.path)
+        // monitor_db.json ships in the app. my_monitor.json and local_monitor_db.json are in the core's
+        // data folder, ~/Library/Application Support/HDR Switch, shared with hdrctl.
         HCSetDBPath(Bundle.main.path(forResource: "monitor_db", ofType: "json"))
         HCSetLogger { _, message in NSLog("HDR Switch: %@", message ?? "") }
 

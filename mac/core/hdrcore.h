@@ -17,12 +17,19 @@ typedef NS_ENUM(NSInteger, HCLogLevel) { HCLogInfo, HCLogWarning };
 void HCSetLogger(void (^logger)(HCLogLevel level, NSString *message));
 
 // -------------------------------------------------------------- data files --
-// monitor_db.json and my_monitor.json are read from this folder. Default: the folder of
-// the running executable (symlinks resolved).
+// my_monitor.json and local_monitor_db.json live in the data folder, shared by the CLI and the app:
+// ~/Library/Application Support/HDR Switch (created if needed), unless set here (tests).
 void HCSetDataDirectory(NSString *dir);
 NSString *HCDataDirectory(void);
-// monitor_db.json's path, if it isn't in the data folder (e.g. the app ships it in its Resources).
+// The folder of the running executable (symlinks resolved). The shipped monitor_db.json is read
+// from here unless HCSetDBPath says otherwise (the app ships it in its Resources).
+NSString *HCToolDirectory(void);
 void HCSetDBPath(NSString *path);
+// Before 0.1.9 the CLI kept my_monitor.json and local_monitor_db.json next to hdrctl. Moves them to
+// the data folder if it doesn't have them yet, and returns a line for each move.
+NSArray<NSString *> *HCMigrateToolDirectoryFiles(void);
+// Old files next to hdrctl that are ignored because the data folder already has its own.
+NSArray<NSString *> *HCToolDirectoryLeftovers(void);
 
 // --------------------------------------------------------------- SkyLight --
 
@@ -66,8 +73,8 @@ BOOL HCDDCGet(IOAVServiceRef av, uint8_t code, uint16_t *cur, uint16_t *max);
 //   {"manufacturer":"SKG","product_id":10158,"product_name":"M27P6S",
 //    "display_controller_id":22021,"firmware_version":0,"local_dimming_range_max":5}
 // monitor_db.json maps that hash to the identity and the monitor's DDC settings; it ships with the
-// tool. local_monitor_db.json (next to it) has the same format and holds monitors detected on this
-// Mac (hdrctl detect); its entries override the shipped ones. my_monitor.json
+// tool (next to hdrctl, or in the app). local_monitor_db.json, in the data folder, has the same
+// format and holds monitors detected on this Mac; its entries override the shipped ones. my_monitor.json
 // holds the monitor set up on this Mac, as { "<hash>": { "identity": { ... } } }. Before any DDC
 // write, the connected monitor is read, hashed, and must match my_monitor.json and be in the DB.
 

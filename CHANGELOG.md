@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `mac/app/release.sh <version>`: builds the menu bar app and packages it as `dist/hdrswitch-<version>-macos-arm64.dmg` (with its SHA-256), holding `HDR Switch.app` next to an Applications shortcut. It sets the app's version, re-signs it, and checks it's arm64, targets macOS 12, has a valid signature and includes `monitor_db.json`. The CLI zip (`mac/release.sh`) is unchanged.
 - macOS menu bar app (in progress), in `mac/app/`: a menu bar icon (`menu_icon`) that opens a Control Center–style panel with the monitor's name, an HDR toggle, the current color profile and local dimming setting, and an **Settings…** row, which opens an empty settings window. The toggle does the same as `hdrctl on` / `off`. For a monitor that isn't supported, the name gets an exclamation mark (with an explanation on hover) and the toggle leaves local dimming alone. `monitor_db.json` ships in the app; `my_monitor.json` is kept in `~/Library/Application Support/HDR Switch/`. Built with `mac/app/build.sh`; runs on macOS 12 or later.
 - Menu bar app: color profile and local dimming dropdowns (installed RGB display profiles; the levels in `monitor_db.json`), applied when picked, and a refresh button that re-reads everything.
 - Menu bar app settings window: for HDR on and for HDR off, **Set color profile to** and **Set local dimming to**, each a checkbox and a dropdown (installed RGB display profiles; the monitor's levels from `monitor_db.json`). The HDR toggle sets the chosen values after switching, or leaves them alone when unchecked. Defaults: BT.2020 and Standard for on, Display P3 and Off for off. Each change is saved right away, with no Confirm or Cancel; Esc closes the window. The window uses the popup's translucent background, running under a transparent title bar.
@@ -25,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- macOS: `hdrctl` keeps `my_monitor.json` and `local_monitor_db.json` in `~/Library/Application Support/HDR Switch/`, the same files the menu bar app uses, instead of next to `hdrctl`. The first run moves existing ones there, unless it already has its own copy (which then wins; `hdrctl identify` points out the leftover). The shipped `monitor_db.json` stays next to `hdrctl`.
 - `monitor_db.json`: the KTC M27P6S entry now maps all 5 local dimming levels (off 0, auto 1, low 4, standard 2, high 3), found with `hdrctl detect`, and sets `hdr_on` / `hdr_off` to standard / off (the same as before). It also records how it was detected in a `report` section.
 
 ## [0.1.8-mac] - 2026-10-25

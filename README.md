@@ -36,7 +36,7 @@ If your monitor has local dimming that you can change in its own menu, `hdrctl d
 hdrctl --display "<part of display name>" detect
 ```
 
-It asks how many local dimming levels the monitor's menu has and what they're called, then asks you to set each one in the menu while it reads every VCP code (about a minute for the first level, less for the rest). The code that changes with local dimming, and only that code, is the one it uses. Until then it only reads. After you confirm, it writes each level back so you can check it on the monitor, then asks which levels `on` and `off` should use. The result is saved to `local_monitor_db.json` next to `hdrctl` (it overrides the shipped `monitor_db.json` entry for the same monitor), and it offers to open a pre-filled GitHub issue so the monitor can be added for everyone. `my_monitor.json` isn't changed. Quit MonitorControl and other DDC apps first, and keep the monitor awake.
+It asks how many local dimming levels the monitor's menu has and what they're called, then asks you to set each one in the menu while it reads every VCP code (about a minute for the first level, less for the rest). The code that changes with local dimming, and only that code, is the one it uses. Until then it only reads. After you confirm, it writes each level back so you can check it on the monitor, then asks which levels `on` and `off` should use. The result is saved to `local_monitor_db.json` in `~/Library/Application Support/HDR Switch/`, shared with the menu bar app (it overrides the shipped `monitor_db.json` entry for the same monitor), and it offers to open a pre-filled GitHub issue so the monitor can be added for everyone. `my_monitor.json` isn't changed. Quit MonitorControl and other DDC apps first, and keep the monitor awake.
 
 On Windows the same applies, except that there is no `profile` command yet, so only the HDR step is available for other monitors:
 
@@ -52,9 +52,10 @@ macOS:
 - `mac/core/hdrcore.h`, `mac/core/hdrcore.m`: HDR, color profile, DDC/CI and monitor DB code, shared by the CLI and the menu bar app
 - `mac/app/`: the menu bar app (in progress): `Sources/*.swift` (`Settings.swift` holds the settings window), `Info.plist`, `Resources/menu_icon*.png`, and `build.sh`, which builds `mac/app/build/HDR Switch.app`
 - `mac/build.sh`: builds `mac/hdrctl`
-- `mac/release.sh`: builds and packages a binary release zip
+- `mac/release.sh`: builds and packages the CLI release zip
+- `mac/app/release.sh`: builds and packages the menu bar app as a DMG
 - `mac/m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
-- `mac/my_monitor.json`: your monitor, created on first run, not in the repo (see [Set up your monitor](#set-up-your-monitor-macos))
+- `~/Library/Application Support/HDR Switch/my_monitor.json`: your monitor (macOS, shared by `hdrctl` and the app), created on first run (see [Set up your monitor](#set-up-your-monitor-macos))
 
 Windows:
 
@@ -67,7 +68,7 @@ Windows:
 Both:
 
 - `monitor_db.json`: known monitors and their local dimming settings (see [Safety checks](#safety-checks)). The build scripts copy it next to `mac/hdrctl` and `win/hdrctl.exe`; edit the one at the root.
-- `local_monitor_db.json`: monitors detected on this computer with `hdrctl detect` (macOS), next to `hdrctl`; not in the repo
+- `~/Library/Application Support/HDR Switch/local_monitor_db.json`: monitors detected on this Mac with `hdrctl detect` or the app's Detect Monitor, shared by both
 - `CHANGELOG.md`: release history
 - `LICENSE`: MIT
 
@@ -113,7 +114,7 @@ Get-ChildItem -Recurse | Unblock-File
 
 ### Set up your monitor (macOS)
 
-`hdrctl` remembers your monitor in `my_monitor.json`, next to `hdrctl`. You don't need to create it: the first command that reads the monitor (`status`, `identify`, `on`, `off`, `toggle` or `ddc set`) creates it from the connected monitor and prints a line like:
+`hdrctl` remembers your monitor in `my_monitor.json`, in `~/Library/Application Support/HDR Switch/` (the menu bar app uses the same file). You don't need to create it: the first command that reads the monitor (`status`, `identify`, `on`, `off`, `toggle` or `ddc set`) creates it from the connected monitor and prints a line like:
 
 ```
 Created /path/to/my_monitor.json for M27P6S (5e482ea7…)
@@ -143,7 +144,7 @@ To check it, or to switch to the monitor that's connected now:
 ./hdrctl identify --save   # rewrite my_monitor.json for the connected monitor
 ```
 
-An old one-line `my_monitor` file from 0.1.4 is replaced by `my_monitor.json` automatically. If `hdrctl` is copied to another folder, copy `monitor_db.json` and `my_monitor.json` with it. A symlink to `hdrctl` works, since the files are looked up next to the real binary.
+An old one-line `my_monitor` file from 0.1.4 is replaced by `my_monitor.json` automatically. Before 0.1.9, `my_monitor.json` and `local_monitor_db.json` were kept next to `hdrctl`; the first run of a newer `hdrctl` moves them to Application Support (unless it already has its own copy, which then wins; `hdrctl identify` points out any leftover). The shipped `monitor_db.json` stays next to `hdrctl`: if you copy `hdrctl` to another folder, copy `monitor_db.json` with it, or use a symlink, since it's looked up next to the real binary.
 
 ### Set up your monitor (Windows)
 
@@ -163,7 +164,7 @@ mac/build.sh          # writes mac/hdrctl
 # optional: sudo ln -s "$PWD/mac/hdrctl" /usr/local/bin/hdrctl
 ```
 
-The build writes `mac/hdrctl` next to the source, `monitor_db.json` and `my_monitor.json`. A symlink keeps it able to find them; a copy needs both files copied with it.
+The build writes `mac/hdrctl` next to the source and `monitor_db.json`. A symlink keeps it able to find `monitor_db.json`; a copy needs it copied too. `my_monitor.json` and `local_monitor_db.json` are in Application Support either way.
 
 ### Build the menu bar app (macOS, in progress)
 
@@ -193,8 +194,11 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ### Make a release
 
 ```sh
-mac/release.sh 0.1.2    # writes dist/hdrswitch-0.1.2-macos-arm64.zip and its SHA-256
+mac/release.sh 0.1.2        # the CLI: dist/hdrswitch-0.1.2-macos-arm64.zip and its SHA-256
+mac/app/release.sh 0.1.9    # the menu bar app: dist/hdrswitch-0.1.9-macos-arm64.dmg and its SHA-256
 ```
+
+The DMG holds `HDR Switch.app` next to an Applications shortcut to drag it onto. The script sets the app's version from the argument, re-signs it (ad hoc), and checks it's arm64, targets macOS 12, has a valid signature and includes `monitor_db.json`.
 
 On Windows:
 

@@ -681,16 +681,39 @@ NSArray<NSNumber *> *HCDimmingCandidates(NSArray<NSDictionary *> *scans, NSDicti
 
 - (NSUInteger)scannedLevels { return _scans.count; }
 
+// A code that answered in the first scan but not in this one most likely missed a reply (the bus is
+// flaky), and dropping it would rule out the real local dimming code. So re-read those a few times.
+- (NSDictionary *)withMissedCodesReread:(NSDictionary *)scan {
+    NSMutableDictionary *out = [scan mutableCopy];
+    for (NSNumber *code in _scans.firstObject ?: @{}) {
+        for (int t = 0; t < 5 && !out[code] && !HCDDCDidTimeOut(); t++) {
+            usleep(300000);
+            uint16_t cur = 0, max = 0;
+            if (HCDDCGet(_av, code.unsignedCharValue, &cur, &max)) out[code] = @[ @(cur), @(max) ];
+        }
+    }
+    return out;
+}
+
 - (BOOL)scanNextLevelWithProgress:(void (^)(NSUInteger, NSUInteger, NSUInteger))progress {
     if (_scans.count >= _levelCount) return NO;
     HCDDCClearTimeout();
     if (_scans.count == 0) {
         [_scans addObject:HCDDCScan(_av, nil, ^(NSUInteger done, NSUInteger total) { if (progress) progress(0, done, total); })];
-        _repeat = HCDDCScan(_av, [_scans[0] allKeys], ^(NSUInteger done, NSUInteger total) { if (progress) progress(1, done, total); });
+        _repeat = [self withMissedCodesReread:HCDDCScan(_av, [_scans[0] allKeys], ^(NSUInteger done, NSUInteger total) {
+            if (progress) progress(1, done, total);
+        })];
     } else {
-        [_scans addObject:HCDDCScan(_av, [_scans[0] allKeys], ^(NSUInteger done, NSUInteger total) { if (progress) progress(0, done, total); })];
+        [_scans addObject:[self withMissedCodesReread:HCDDCScan(_av, [_scans[0] allKeys], ^(NSUInteger done, NSUInteger total) {
+            if (progress) progress(0, done, total);
+        })]];
     }
     return !HCDDCDidTimeOut();
+}
+
+- (void)discardLevelsFrom:(NSUInteger)level {
+    if (level < _scans.count) [_scans removeObjectsInRange:NSMakeRange(level, _scans.count - level)];
+    if (level == 0) _repeat = nil;
 }
 
 - (NSArray<NSNumber *> *)candidates {

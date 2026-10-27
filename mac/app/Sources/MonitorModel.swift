@@ -2,6 +2,10 @@
 
 import Foundation
 
+// All DDC work (popup refresh and changes, monitor detection) runs here, one thing at a time, since
+// overlapping DDC requests garble each other's replies.
+let ddcQueue = DispatchQueue(label: "HDR Switch DDC")
+
 final class MonitorModel: ObservableObject {
     static let displayName = "M27P6S"   // the same default as hdrctl --display
 
@@ -21,7 +25,7 @@ final class MonitorModel: ObservableObject {
 
     private let skyLightLoaded: Bool
     private var profileURLs: [String: URL] = [:]
-    private let work = DispatchQueue(label: "HDR Switch work")   // one lookup or change at a time
+    private let work = ddcQueue
 
     init() {
         var err: NSString?

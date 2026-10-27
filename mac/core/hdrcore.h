@@ -118,7 +118,8 @@ NSDictionary<NSNumber *, NSArray<NSNumber *> *> *HCDDCScan(IOAVServiceRef av, NS
 NSArray<NSNumber *> *HCDimmingCandidates(NSArray<NSDictionary *> *scans, NSDictionary *repeat);
 // One detection run. The user sets each level in the monitor's menu, in order, and scanLevel: is
 // called after each; then the candidates are known. The first level reads every code twice, to rule
-// out values that change on their own; later levels re-read only the codes that answered.
+// out values that change on their own; later levels re-read only the codes that answered, and a code
+// that misses a reply is read again a few times rather than dropped.
 @interface HCDetection : NSObject
 - (instancetype)initWithService:(IOAVServiceRef)av levelCount:(NSUInteger)count;
 @property (readonly) NSUInteger levelCount;
@@ -127,6 +128,8 @@ NSArray<NSNumber *> *HCDimmingCandidates(NSArray<NSDictionary *> *scans, NSDicti
 // codes read so far in that pass and the pass's total. Returns NO if the monitor stopped answering
 // over DDC (asleep?); the detection can't continue then.
 - (BOOL)scanNextLevelWithProgress:(void (^)(NSUInteger pass, NSUInteger done, NSUInteger total))progress;
+// Drops the scans from this level on, so they can be redone (e.g. the user went back a step).
+- (void)discardLevelsFrom:(NSUInteger)level;
 // After every level is scanned: the candidate codes (see HCDimmingCandidates).
 @property (readonly) NSArray<NSNumber *> *candidates;
 - (uint16_t)valueOfCode:(uint8_t)code atLevel:(NSUInteger)level;

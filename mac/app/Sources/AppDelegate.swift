@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var panel: PopupPanel!
     private var settingsWindow: NSWindow?
+    private var detectionWindow: NSWindow?
     private let settings = SettingsModel()
     private var outsideClickMonitor: Any?
     private var modelChanges: AnyCancellable?
@@ -66,10 +67,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.reload()   // always open on the saved settings; closing without Confirm discards edits
         // A new window each time (unless it's open), sized to the current content.
         if settingsWindow?.isVisible != true {
-            settingsWindow = makeSettingsWindow(model: settings, close: { [weak self] in self?.settingsWindow?.close() })
+            settingsWindow = makeSettingsWindow(model: settings, close: { [weak self] in self?.settingsWindow?.close() },
+                                                detect: { [weak self] in self?.openDetection() })
         }
         NSApp.activate(ignoringOtherApps: true)   // a menu bar app isn't active by default
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    // Detect Monitor, from Settings. A new run each time, unless one is open.
+    private func openDetection() {
+        if detectionWindow?.isVisible != true {
+            let model = DetectionModel(onSaved: { [weak self] in self?.settings.reloadLevels() })
+            detectionWindow = makeTranslucentWindow(title: "Detect Monitor",
+                                                    content: DetectionView(model: model, close: { [weak self] in
+                                                        self?.detectionWindow?.close()
+                                                    }))
+            model.start()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        detectionWindow?.makeKeyAndOrderFront(nil)
     }
 }
 

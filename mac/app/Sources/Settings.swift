@@ -64,6 +64,9 @@ final class SettingsModel: ObservableObject {
         levels = Self.setUpMonitorLevels()
     }
 
+    // After a detection is saved: the set-up monitor's levels may have changed. Keeps unsaved edits.
+    func reloadLevels() { levels = Self.setUpMonitorLevels() }
+
     func confirm() {
         Preferences.onProfile = onProfile
         Preferences.offProfile = offProfile
@@ -83,15 +86,15 @@ final class SettingsModel: ObservableObject {
     }
 }
 
-// The settings window, styled like the popup: the same translucent background, running under a
-// transparent title bar so the window is one surface. The SwiftUI content sits below the title bar,
-// sized to fit it, so build a new window when the content may have changed (e.g. the "isn't
-// available" note). Frames rather than Auto Layout: with a full-size content view, constraints and
-// the hosting view's own sizing kept adding the title bar again.
-func makeSettingsWindow(model: SettingsModel, close: @escaping () -> Void) -> NSWindow {
+// A window styled like the popup: the same translucent background, running under a transparent
+// title bar so the window is one surface. The SwiftUI content sits below the title bar, sized to fit
+// it, so build a new window when the content may have changed. Frames rather than Auto Layout: with
+// a full-size content view, constraints and the hosting view's own sizing kept adding the title bar
+// again.
+func makeTranslucentWindow<Content: View>(title: String, content: Content) -> NSWindow {
     let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
                      styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
-    w.title = "HDR Switch Settings"
+    w.title = title
     w.titlebarAppearsTransparent = true
     w.isMovableByWindowBackground = true
     w.isReleasedWhenClosed = false
@@ -103,7 +106,7 @@ func makeSettingsWindow(model: SettingsModel, close: @escaping () -> Void) -> NS
     w.contentView = background
     let titleBar = w.frame.height - w.contentLayoutRect.height
 
-    let host = NSHostingView(rootView: SettingsView(model: model, close: close))
+    let host = NSHostingView(rootView: content)
     let size = host.fittingSize
     if #available(macOS 13.0, *) { host.sizingOptions = [] }   // the window is sized here, not by the host
     w.setFrame(NSRect(x: 0, y: 0, width: size.width, height: size.height + titleBar), display: false)
@@ -114,9 +117,14 @@ func makeSettingsWindow(model: SettingsModel, close: @escaping () -> Void) -> NS
     return w
 }
 
+func makeSettingsWindow(model: SettingsModel, close: @escaping () -> Void, detect: @escaping () -> Void) -> NSWindow {
+    makeTranslucentWindow(title: "HDR Switch Settings", content: SettingsView(model: model, close: close, detect: detect))
+}
+
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     let close: () -> Void
+    let detect: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -128,6 +136,19 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Monitor detection")
+                    .font(.system(size: 13, weight: .bold))
+                HStack(alignment: .top) {
+                    Text("Find your monitor's local dimming setting and its levels, and save them to local_monitor_db.json.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Detect Monitor…", action: detect)
+                }
+            }
+            Divider()
             HStack {
                 Spacer()
                 Button("Cancel", action: close)
@@ -135,7 +156,6 @@ struct SettingsView: View {
                 Button("Confirm") { model.confirm(); close() }
                     .keyboardShortcut(.defaultAction)
             }
-            .padding(.top, 4)
         }
         .padding(20)
         .frame(width: 440)

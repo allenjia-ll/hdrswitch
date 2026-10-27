@@ -53,6 +53,7 @@ final class SettingsModel: ObservableObject {
     @Published var offDimming = Preferences.offDimming
     @Published private(set) var profiles: [String] = []
     @Published private(set) var levels: [String] = []   // the set-up monitor's levels, by value
+    @Published private(set) var hasDetected = false      // local_monitor_db.json exists
 
     // Shows the saved settings, dropping any unconfirmed edits.
     func reload() {
@@ -62,10 +63,20 @@ final class SettingsModel: ObservableObject {
         offDimming = Preferences.offDimming
         profiles = HCListProfiles().compactMap { $0["name"] as? String }
         levels = Self.setUpMonitorLevels()
+        hasDetected = Self.hasDetectedMonitors()
     }
 
     // After a detection is saved: the set-up monitor's levels may have changed. Keeps unsaved edits.
-    func reloadLevels() { levels = Self.setUpMonitorLevels() }
+    func reloadLevels() {
+        levels = Self.setUpMonitorLevels()
+        hasDetected = Self.hasDetectedMonitors()
+    }
+
+    // The file exists, even if it's damaged or empty: the viewer says so.
+    private static func hasDetectedMonitors() -> Bool {
+        guard let path = HCLocalDBPath() else { return false }
+        return FileManager.default.fileExists(atPath: path)
+    }
 
     func confirm() {
         Preferences.onProfile = onProfile
@@ -91,9 +102,23 @@ final class SettingsModel: ObservableObject {
 // it, so build a new window when the content may have changed. Frames rather than Auto Layout: with
 // a full-size content view, constraints and the hosting view's own sizing kept adding the title bar
 // again.
-func makeTranslucentWindow<Content: View>(title: String, content: Content) -> NSWindow {
-    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
-                     styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+// A window that can resize to its content after it changes (see refit()).
+final class TranslucentWindow: NSWindow {
+    var measure: () -> NSSize = { .zero }   // the SwiftUI content's current size
+
+    // New size for the current content, keeping the top edge where it is.
+    func refit() {
+        let size = measure()
+        let titleBar = frame.height - contentLayoutRect.height
+        let height = size.height + titleBar
+        guard size != .zero, abs(height - frame.height) > 0.5 || abs(size.width - frame.width) > 0.5 else { return }
+        setFrame(NSRect(x: frame.minX, y: frame.maxY - height, width: size.width, height: height), display: true)
+    }
+}
+
+func makeTranslucentWindow<Content: View>(title: String, content: Content) -> TranslucentWindow {
+    let w = TranslucentWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+                              styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
     w.title = title
     w.titlebarAppearsTransparent = true
     w.isMovableByWindowBackground = true
@@ -113,18 +138,24 @@ func makeTranslucentWindow<Content: View>(title: String, content: Content) -> NS
     host.frame = NSRect(origin: .zero, size: size)   // the bottom of the window, below the title bar
     host.autoresizingMask = [.width, .height]
     background.addSubview(host)
+    w.measure = { NSHostingView(rootView: content).fittingSize }   // a fresh host sees the content's current state
     w.center()
     return w
 }
 
-func makeSettingsWindow(model: SettingsModel, close: @escaping () -> Void, detect: @escaping () -> Void) -> NSWindow {
-    makeTranslucentWindow(title: "HDR Switch Settings", content: SettingsView(model: model, close: close, detect: detect))
+func makeSettingsWindow(model: SettingsModel, close: @escaping () -> Void, detect: @escaping () -> Void,
+                        viewDetected: @escaping () -> Void, clearDetected: @escaping () -> Void) -> TranslucentWindow {
+    makeTranslucentWindow(title: "HDR Switch Settings",
+                          content: SettingsView(model: model, close: close, detect: detect, viewDetected: viewDetected,
+                                                clearDetected: clearDetected))
 }
 
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     let close: () -> Void
     let detect: () -> Void
+    let viewDetected: () -> Void
+    let clearDetected: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -147,6 +178,14 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Detect Monitor…", action: detect)
+                }
+                // Only when there's a local_monitor_db.json. The window refits when this appears or goes.
+                if model.hasDetected {
+                    HStack {
+                        Spacer()
+                        Button("View Detected Monitor…", action: viewDetected)
+                        Button("Delete Detected Monitor…", action: clearDetected)
+                    }
                 }
             }
             Divider()

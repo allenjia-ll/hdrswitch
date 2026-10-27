@@ -7,8 +7,9 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var panel: PopupPanel!
-    private var settingsWindow: NSWindow?
+    private var settingsWindow: TranslucentWindow?
     private var detectionWindow: NSWindow?
+    private var detectedWindow: NSWindow?
     private let settings = SettingsModel()
     private var outsideClickMonitor: Any?
     private var modelChanges: AnyCancellable?
@@ -68,7 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A new window each time (unless it's open), sized to the current content.
         if settingsWindow?.isVisible != true {
             settingsWindow = makeSettingsWindow(model: settings, close: { [weak self] in self?.settingsWindow?.close() },
-                                                detect: { [weak self] in self?.openDetection() })
+                                                detect: { [weak self] in self?.openDetection() },
+                                                viewDetected: { [weak self] in self?.openDetected() },
+                                                clearDetected: { [weak self] in self?.clearDetected() })
         }
         NSApp.activate(ignoringOtherApps: true)   // a menu bar app isn't active by default
         settingsWindow?.makeKeyAndOrderFront(nil)
@@ -77,7 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Detect Monitor, from Settings. A new run each time, unless one is open.
     private func openDetection() {
         if detectionWindow?.isVisible != true {
-            let model = DetectionModel(onSaved: { [weak self] in self?.settings.reloadLevels() })
+            let model = DetectionModel(onSaved: { [weak self] in self?.detectedMonitorsChanged() })
             detectionWindow = makeTranslucentWindow(title: "Detect Monitor",
                                                     content: DetectionView(model: model, close: { [weak self] in
                                                         self?.detectionWindow?.close()
@@ -86,6 +89,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         detectionWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    // Delete Detected Monitor, from Settings: moves local_monitor_db.json to the Trash after asking, so
+    // the shipped monitor_db.json applies again. my_monitor.json isn't touched.
+    private func clearDetected() {
+        guard let path = HCLocalDBPath(), FileManager.default.fileExists(atPath: path) else {
+            detectedMonitorsChanged()
+            return
+        }
+        var err: NSString?
+        let count = HCLoadLocalDB(&err)?.count ?? 0
+        let alert = NSAlert()
+        alert.messageText = "Delete detected monitors?"
+        alert.informativeText = (count == 1 ? "The detected monitor in local_monitor_db.json" :
+                                    count > 1 ? "The \(count) detected monitors in local_monitor_db.json" : "local_monitor_db.json")
+            + " will be moved to the Trash. HDR Switch then uses the shipped monitor_db.json for "
+            + (count == 1 ? "that monitor." : "these monitors.")
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        } catch {
+            let failed = NSAlert()
+            failed.messageText = "Couldn't move local_monitor_db.json to the Trash"
+            failed.informativeText = error.localizedDescription
+            failed.runModal()
+        }
+        detectedWindow?.close()   // it would show a file that's gone
+        detectedMonitorsChanged()
+    }
+
+    // local_monitor_db.json was saved or cleared: Settings' levels and buttons change, and its window
+    // may need a different height for them.
+    private func detectedMonitorsChanged() {
+        settings.reloadLevels()
+        settingsWindow?.refit()
+    }
+
+    // View Detected Monitor, from Settings: what's in local_monitor_db.json. Reread each time it opens.
+    private func openDetected() {
+        if detectedWindow?.isVisible != true {
+            detectedWindow = makeTranslucentWindow(title: "Detected Monitor",
+                                                   content: DetectedMonitorView(model: DetectedMonitorModel(), close: { [weak self] in
+                                                       self?.detectedWindow?.close()
+                                                   }))
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        detectedWindow?.makeKeyAndOrderFront(nil)
     }
 }
 

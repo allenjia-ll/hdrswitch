@@ -462,6 +462,48 @@ NSString *HCPrettyJSON(id object) {
     return d ? [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] : nil;
 }
 
+NSDictionary *HCMakeLocalMonitorEntry(NSDictionary *identity, uint8_t code, NSArray<NSDictionary *> *levels,
+                                      NSString *hdrOn, NSString *hdrOff, NSDictionary *report) {
+    return @{
+        @"identity": identity,
+        @"settings": @{ @"local_dimming": @{ @"vcp": [NSString stringWithFormat:@"0x%02X", code], @"levels": levels,
+                                             @"hdr_on": hdrOn, @"hdr_off": hdrOff } },
+        @"report": report ?: @{},
+    };
+}
+
+// Leaf values by dotted key path. A list of levels reads as "off 0, standard 2"; other lists as JSON.
+static void flattenEntry(id value, NSString *path, NSMutableDictionary<NSString *, NSString *> *out) {
+    if ([value isKindOfClass:NSDictionary.class]) {
+        for (id key in value) flattenEntry(value[key], path.length ? [path stringByAppendingFormat:@".%@", key] : [key description], out);
+    } else if ([value isKindOfClass:NSArray.class]) {
+        NSMutableArray *levels = [NSMutableArray array];
+        for (NSDictionary *l in value)
+            if ([l isKindOfClass:NSDictionary.class] && l[@"name"] && l[@"value"]) [levels addObject:[NSString stringWithFormat:@"%@ %@", l[@"name"], l[@"value"]]];
+        if (levels.count == [value count]) out[path] = [levels componentsJoinedByString:@", "];
+        else {
+            NSData *d = [NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys error:NULL];
+            out[path] = d ? [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] : [value description];
+        }
+    } else if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) {
+        out[path] = [value boolValue] ? @"true" : @"false";
+    } else {
+        out[path] = [value description];
+    }
+}
+
+NSArray<NSString *> *HCEntryDifferences(NSDictionary *old, NSDictionary *new) {
+    NSMutableDictionary *a = [NSMutableDictionary dictionary], *b = [NSMutableDictionary dictionary];
+    flattenEntry(old ?: @{}, @"", a);
+    flattenEntry(new ?: @{}, @"", b);
+    NSMutableSet *keys = [NSMutableSet setWithArray:a.allKeys];
+    [keys addObjectsFromArray:b.allKeys];
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *k in [keys.allObjects sortedArrayUsingSelector:@selector(compare:)])
+        if (![a[k] isEqual:b[k]]) [out addObject:[NSString stringWithFormat:@"%@: %@ → %@", k, a[k] ?: @"(none)", b[k] ?: @"(none)"]];
+    return out;
+}
+
 NSDictionary *HCSaveLocalMonitor(NSDictionary *identity, uint8_t code, NSArray<NSDictionary *> *levels,
                                  NSString *hdrOn, NSString *hdrOff, NSDictionary *report, NSString **error) {
     NSString *canonical = HCIdentityJSON(identity), *path = HCLocalDBPath();
@@ -469,12 +511,8 @@ NSDictionary *HCSaveLocalMonitor(NSDictionary *identity, uint8_t code, NSArray<N
     if (!path) { fail(error, @"can't find hdrctl's own folder"); return nil; }
     NSDictionary *existing = HCLoadLocalDB(error);
     if (!existing) return nil;
-    NSDictionary *entry = @{
-        @"identity": identity,
-        @"settings": @{ @"local_dimming": @{ @"vcp": [NSString stringWithFormat:@"0x%02X", code], @"levels": levels,
-                                             @"hdr_on": hdrOn, @"hdr_off": hdrOff } },
-        @"report": report ?: @{},
-    };
+    NSDictionary *entry = HCMakeLocalMonitorEntry(identity, code, levels, hdrOn, hdrOff, report);
+    // Only this monitor's key changes; other monitors in the file are kept.
     NSMutableDictionary *db = [existing mutableCopy];
     db[HCSHA256Hex(canonical)] = entry;
     NSString *text = HCPrettyJSON(db);

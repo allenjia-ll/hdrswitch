@@ -121,7 +121,8 @@ final class DetectionModel: ObservableObject {
                 var dbErr: NSString?
                 let local = HCLoadLocalDB(&dbErr), db = HCLoadDB(&dbErr)
                 if local?[self.hash] != nil {
-                    self.knownNote = "It's already in local_monitor_db.json; a new detection replaces that entry."
+                    self.knownNote = "It's already in local_monitor_db.json. When you save, HDR Switch shows what changes "
+                        + "and asks before replacing that entry; other monitors in the file are kept."
                 } else if db?[self.hash] != nil {
                     self.knownNote = "It's already in the shipped monitor_db.json. The result is saved to "
                         + "local_monitor_db.json and is used instead of the shipped entry on this Mac."
@@ -247,24 +248,37 @@ final class DetectionModel: ObservableObject {
         }
     }
 
+    // Asks before saving. If local_monitor_db.json already has this monitor, shows what replacing its
+    // entry changes. Other monitors in the file are kept either way.
     private func confirmSave() {
-        guard let code = code else { return }
+        guard let identity = identity, let code = code, let detection = detection,
+              let levels = detection.levelsNamed(levelNames, forCode: code),
+              let report = HCDetectionReport("HDR Switch", firmware.trimmingCharacters(in: .whitespaces),
+                                             connection.trimmingCharacters(in: .whitespaces)) else { return }
+        let entry = HCMakeLocalMonitorEntry(identity, code, levels, onLevel, offLevel, report)
+        var err: NSString?
         let alert = NSAlert()
-        alert.messageText = "Save this monitor?"
-        alert.informativeText = "\(monitorName): local dimming on VCP \(String(format: "0x%02X", code)) with \(levelCount) "
-            + "levels will be saved to local_monitor_db.json, and used instead of any shipped entry on this Mac."
-        alert.addButton(withTitle: "Save")
+        if let old = HCLoadLocalDB(&err)?[hash] as? [AnyHashable: Any] {
+            let changes = HCEntryDifferences(old, entry) ?? []
+            alert.messageText = "Replace the saved entry for \(monitorName)?"
+            alert.informativeText = "local_monitor_db.json already has this monitor. Saving replaces its entry; other "
+                + "monitors in the file are kept.\n\n"
+                + (changes.isEmpty ? "Nothing changes." : "Changes:\n" + changes.map { "• " + $0 }.joined(separator: "\n"))
+            alert.addButton(withTitle: "Replace")
+        } else {
+            alert.messageText = "Save this monitor?"
+            alert.informativeText = "\(monitorName): local dimming on VCP \(String(format: "0x%02X", code)) with \(levelCount) "
+                + "levels will be added to local_monitor_db.json (other monitors in it are kept), and used instead of any "
+                + "shipped entry on this Mac."
+            alert.addButton(withTitle: "Save")
+        }
         alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn { save() }
+        if alert.runModal() == .alertFirstButtonReturn { save(identity: identity, code: code, levels: levels, report: report) }
     }
 
-    private func save() {
-        guard let identity = identity, let code = code, let detection = detection else { return }
+    private func save(identity: [AnyHashable: Any], code: UInt8, levels: [[AnyHashable: Any]], report: [AnyHashable: Any]) {
         var err: NSString?
-        let report = HCDetectionReport("HDR Switch", firmware.trimmingCharacters(in: .whitespaces),
-                                       connection.trimmingCharacters(in: .whitespaces))
-        guard let entry = HCSaveLocalMonitor(identity, code, detection.levelsNamed(levelNames, forCode: code),
-                                             onLevel, offLevel, report, &err) else {
+        guard let entry = HCSaveLocalMonitor(identity, code, levels, onLevel, offLevel, report, &err) else {
             fail("Couldn't save: \((err as String?) ?? "unknown error").")
             return
         }

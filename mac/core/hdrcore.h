@@ -148,7 +148,15 @@ NSDictionary *HCDetectionReport(NSString *tool, NSString *firmware, NSString *co
 // keyed by its hash, e.g. HCPrettyJSON(@{ hash: entry })).
 NSURL *HCContributionURL(NSDictionary *identity, NSString *entryJSON, NSString *tool);
 
-// Adds (or replaces) this monitor's entry in local_monitor_db.json and returns it, or nil with *error
+// The entry HCSaveLocalMonitor would save, without saving it (e.g. to compare with the saved one).
+NSDictionary *HCMakeLocalMonitorEntry(NSDictionary *identity, uint8_t code, NSArray<NSDictionary *> *levels,
+                                      NSString *hdrOn, NSString *hdrOff, NSDictionary *report);
+// What changes between two entries, one readable line per value, sorted by key path:
+// "settings.local_dimming.hdr_on: standard → high". A list of levels reads as "off 0, standard 2".
+// Empty if they're the same.
+NSArray<NSString *> *HCEntryDifferences(NSDictionary *old, NSDictionary *new);
+// Adds (or replaces) this monitor's entry in local_monitor_db.json, keeping the file's other monitors,
+// and returns it, or nil with *error
 // set. levels: @[ @{ @"name": "off", @"value": @0 }, ... ]. hdrOn / hdrOff: the level names hdrctl
 // on / off use (stored as settings.local_dimming.hdr_on / hdr_off). report: details for reviewers.
 NSDictionary *HCSaveLocalMonitor(NSDictionary *identity, uint8_t code, NSArray<NSDictionary *> *levels,

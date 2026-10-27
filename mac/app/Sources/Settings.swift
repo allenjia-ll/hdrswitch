@@ -56,6 +56,7 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var profiles: [String] = []
     @Published private(set) var levels: [String] = []   // the set-up monitor's levels, by value
     @Published private(set) var hasDetected = false      // local_monitor_db.json exists
+    @Published private(set) var monitorName = MonitorModel.displayName   // the monitor these settings are for
 
     // Shows the saved settings.
     func reload() {
@@ -68,12 +69,22 @@ final class SettingsModel: ObservableObject {
         profiles = HCListProfiles().compactMap { $0["name"] as? String }
         levels = Self.setUpMonitorLevels()
         hasDetected = Self.hasDetectedMonitors()
+        monitorName = Self.setUpMonitorName()
     }
 
     // After a detection is saved or deleted: the set-up monitor's levels may have changed.
     func reloadLevels() {
         levels = Self.setUpMonitorLevels()
         hasDetected = Self.hasDetectedMonitors()
+        monitorName = Self.setUpMonitorName()
+    }
+
+    // The monitor in my_monitor.json, or the display the app looks for if none is set up yet.
+    private static func setUpMonitorName() -> String {
+        var identity: NSDictionary?, why: NSString?
+        guard HCReadMyMonitor(&identity, &why) != nil, let name = identity?["product_name"] as? String, !name.isEmpty
+        else { return MonitorModel.displayName }
+        return name
     }
 
     // The file exists, even if it's damaged or empty: the viewer says so.
@@ -99,6 +110,17 @@ final class SettingsModel: ObservableObject {
 // it, so build a new window when the content may have changed. Frames rather than Auto Layout: with
 // a full-size content view, constraints and the hosting view's own sizing kept adding the title bar
 // again.
+// Near white in light mode, like the popup (its panels are then a little darker); clear in dark mode.
+final class LightTint: NSView {
+    override func viewDidMoveToWindow() { update() }
+    override func viewDidChangeEffectiveAppearance() { update() }
+    private func update() {
+        wantsLayer = true
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        layer?.backgroundColor = dark ? NSColor.clear.cgColor : NSColor.white.withAlphaComponent(0.6).cgColor
+    }
+}
+
 // A window that can resize to its content after it changes (see refit()).
 final class TranslucentWindow: NSWindow {
     var measure: () -> NSSize = { .zero }   // the SwiftUI content's current size
@@ -134,6 +156,9 @@ func makeTranslucentWindow<Content: View>(title: String, content: Content) -> Tr
     let size = host.fittingSize
     if #available(macOS 13.0, *) { host.sizingOptions = [] }   // the window is sized here, not by the host
     w.setFrame(NSRect(x: 0, y: 0, width: size.width, height: size.height + titleBar), display: false)
+    let tint = LightTint(frame: background.bounds)   // the whole window, title bar included
+    tint.autoresizingMask = [.width, .height]
+    background.addSubview(tint)
     host.frame = NSRect(origin: .zero, size: size)   // the bottom of the window, below the title bar
     host.autoresizingMask = [.width, .height]
     background.addSubview(host)
@@ -156,7 +181,9 @@ struct SettingsView: View {
     let clearDetected: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(model.monitorName)   // the settings below are for this monitor
+                .font(.system(size: 13, weight: .bold))
             Section(title: "When HDR is turned on", profile: $model.onProfile, dimming: $model.onDimming, model: model)
             Section(title: "When HDR is turned off", profile: $model.offProfile, dimming: $model.offDimming, model: model)
             if model.levels.isEmpty {
@@ -165,24 +192,26 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Divider()
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Monitor detection")
                     .font(.system(size: 13, weight: .bold))
-                HStack(alignment: .top) {
-                    Text("Find your monitor's local dimming setting and its levels, and save them to local_monitor_db.json.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    Button("Detect Monitor…", action: detect)
-                }
-                // Only when there's a local_monitor_db.json. The window refits when this appears or goes.
-                if model.hasDetected {
-                    HStack {
+                Panel {
+                    HStack(alignment: .center) {
+                        Text("Find your monitor's local dimming setting and its levels, and save them to local_monitor_db.json.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         Spacer()
-                        Button("View Detected Monitor…", action: viewDetected)
-                        Button("Delete Detected Monitor…", action: clearDetected)
+                        Button("Detect Monitor…", action: detect)
+                    }
+                    // Only when there's a local_monitor_db.json. The window refits when this appears or goes.
+                    if model.hasDetected {
+                        Divider().padding(.vertical, 6)
+                        HStack {
+                            Spacer()
+                            Button("View Detected Monitor…", action: viewDetected)
+                            Button("Delete Detected Monitor…", action: clearDetected)
+                        }
                     }
                 }
             }
@@ -198,18 +227,22 @@ struct SettingsView: View {
         @ObservedObject var model: SettingsModel
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(.system(size: 13, weight: .bold))   // like the monitor's name in the popup
-                RuleRow(label: "Set color profile to", rule: $profile, options: model.profiles, title: { $0 })
-                RuleRow(label: "Set local dimming to", rule: $dimming, options: model.levels, title: { $0.capitalized })
-                    .disabled(model.levels.isEmpty)
+                Panel {
+                    RuleRow(label: "Set color profile to", rule: $profile, options: model.profiles, title: { $0 })
+                    Divider().padding(.vertical, 6)
+                    RuleRow(label: "Set local dimming to", rule: $dimming, options: model.levels, title: { $0.capitalized })
+                        .disabled(model.levels.isEmpty)
+                }
             }
         }
     }
 }
 
-// "[✓] Set … to [value ▾]"; the dropdown is greyed out while unchecked.
+// "[✓] Set … to        value ⌃⌄": the checkbox on the left, the popup's menu control on the right,
+// dimmed while unchecked.
 struct RuleRow: View {
     let label: String
     @Binding var rule: SettingRule
@@ -217,19 +250,16 @@ struct RuleRow: View {
     let title: (String) -> String
 
     var body: some View {
+        // The saved value is listed even if it's no longer available, so it stays visible.
+        let shown = options.contains(rule.value) ? options : [rule.value] + options
         HStack(spacing: 8) {
             Toggle(label, isOn: $rule.enabled)
                 .toggleStyle(.checkbox)
-                .frame(width: 160, alignment: .leading)   // dropdowns line up across rows
-            Picker("", selection: $rule.value) {
-                // The saved value is listed even if it's no longer available, so it stays visible.
-                ForEach(options.contains(rule.value) ? options : [rule.value] + options, id: \.self) {
-                    Text(title($0)).tag($0)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .disabled(!rule.enabled)
+                .font(.system(size: 13))
+            Spacer()
+            Dropdown(options: shown.map(title), selection: title(rule.value),
+                     select: { chosen in if let value = shown.first(where: { title($0) == chosen }) { rule.value = value } })
+                .disabled(!rule.enabled)
         }
     }
 }

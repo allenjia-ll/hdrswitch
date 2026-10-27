@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Menu bar app: the settings window starts with the name of the monitor its settings are for (the one in `my_monitor.json`).
+- Menu bar app: the settings window matches the panel: each section is a panel under its heading, with a separator between its rows; the checkboxes are on the left and the System Settings-style menus on the right (dimmed while unchecked). Settings, Detect Monitor and Detected Monitor are near white in light mode, like the panel.
 - Menu bar app: the panel's HDR, Color profile and Local dimming rows are styled like System Settings > Displays: 13 pt labels, the controls on the right, a small switch for HDR (instead of a round icon), menus drawn as the value followed by up/down arrows in a gray circle (a rounded box around both while the mouse is over one), and two panels: HDR, then Color profile and Local dimming with a separator. In light mode the panel is near white with slightly gray panels on it, as in System Settings; in dark mode the panels are slightly lighter. The panel is a little wider (330 pt) so "Rec. ITU-R BT.2020-1" fits. The pointing-hand cursor and the "Toggle HDR" tooltip the round icon had are gone.
 
 ## [0.2.1] - 2026-10-26

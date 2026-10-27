@@ -136,6 +136,7 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Divider()
             VStack(alignment: .leading, spacing: 8) {
                 Text("Monitor detection")
                     .font(.system(size: 13, weight: .bold))

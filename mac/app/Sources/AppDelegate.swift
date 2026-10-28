@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = SettingsModel()
     private var outsideClickMonitor: Any?
     private var modelChanges: AnyCancellable?
+    private var settingsChanges: AnyCancellable?
     private let displays = DisplayList()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -35,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // after each change.
         modelChanges = displays.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.panel.refit() }
+        }
+        // The same for the settings window, e.g. when another monitor's settings show a note.
+        settingsChanges = settings.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.settingsWindow?.refit() }
         }
         // Clicking another app's window activates that app; close the popup then.
         NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification,
@@ -121,11 +126,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         detectedMonitorsChanged()
     }
 
-    // local_monitor_db.json was saved or cleared: Settings' levels and buttons change, and its window
-    // may need a different height for them.
+    // local_monitor_db.json was saved or cleared: Settings' levels and buttons change (its window
+    // refits to them).
     private func detectedMonitorsChanged() {
         settings.reloadLevels()
-        settingsWindow?.refit()
     }
 
     // View Detected Monitor, from Settings: what's in local_monitor_db.json. Reread each time it opens.

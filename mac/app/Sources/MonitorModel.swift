@@ -7,6 +7,15 @@ import Foundation
 // overlapping DDC requests garble each other's replies.
 let ddcQueue = DispatchQueue(label: "HDR Switch DDC")
 
+// For testing the layout with more than one monitor: `open "HDR Switch.app" --args -fakeMonitor "DELL U2725QE"`
+// adds a made-up, unsupported monitor after the real ones, in the popup and Settings. Nothing is sent
+// to it; its switch and profile menu only change what's shown (the switch shows the profile from its
+// settings), and its settings are kept in memory, not saved. The argument lasts for that launch only.
+enum FakeMonitor {
+    static let uuid = "FAKE-MONITOR"
+    static let name = UserDefaults.standard.string(forKey: "fakeMonitor")
+}
+
 // The connected external displays, one MonitorModel each, kept by display UUID.
 final class DisplayList: ObservableObject {
     @Published private(set) var monitors: [MonitorModel] = []
@@ -20,6 +29,7 @@ final class DisplayList: ObservableObject {
             guard let uuid = d["uuid"] as? String, !uuid.isEmpty else { return nil }
             return old[uuid] ?? MonitorModel(uuid: uuid, name: d["name"] as? String ?? "Display")
         }
+        if let name = FakeMonitor.name { monitors.append(old[FakeMonitor.uuid] ?? MonitorModel(uuid: FakeMonitor.uuid, name: name)) }
         // A change in any monitor is a change in the list (the popup refits to it).
         changes = monitors.map { $0.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() } }
         monitors.forEach { $0.refresh() }
@@ -58,11 +68,20 @@ final class MonitorModel: ObservableObject {
         warning = Self.skyLightError
     }
 
+    private var isFake: Bool { uuid == FakeMonitor.uuid }
+
     var canChange: Bool { skyLightLoaded && connected && !busy }
 
     // Re-reads everything. Local dimming needs DDC reads, so it runs on `work`, over a new DDC
     // connection each time.
     func refresh() {
+        if isFake {
+            connected = true
+            support = .unsupported
+            profiles = HCListProfiles().compactMap { $0["name"] as? String }
+            if profile.isEmpty { profile = "Display P3" }
+            return
+        }
         guard skyLightLoaded, !busy, let d = findDisplay() else { return }
         hdrOn = HCIsHDR(d)
         profile = HCCurrentProfile(d)
@@ -73,6 +92,12 @@ final class MonitorModel: ObservableObject {
     // The same steps as hdrctl on/off: HDR, then the color profile and the local dimming level from
     // Settings (each unless unchecked). Local dimming is skipped if the monitor isn't supported.
     func toggleHDR() {
+        if isFake {
+            hdrOn.toggle()
+            let rule = Preferences.profile(hdrOn: hdrOn, uuid: uuid)
+            if rule.enabled { profile = rule.value }
+            return
+        }
         guard canChange, let d = findDisplay() else { return }
         let on = !HCIsHDR(d)
         let profileRule = Preferences.profile(hdrOn: on, uuid: uuid), dimmingRule = Preferences.dimming(hdrOn: on, uuid: uuid)
@@ -105,6 +130,7 @@ final class MonitorModel: ObservableObject {
 
     // Applies the profile now, like `hdrctl profile`. The HDR toggle uses the profiles from Settings.
     func selectProfile(_ name: String) {
+        if isFake { profile = name; return }
         guard canChange, name != profile, let url = profileURLs[name], let d = findDisplay() else { return }
         profile = name
         run(d, warnIfSkipped: nil) { _ in

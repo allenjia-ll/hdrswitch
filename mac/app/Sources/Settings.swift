@@ -31,6 +31,7 @@ enum Preferences {
     // A monitor without its own settings gets those saved without a UUID, which held the one
     // monitor's settings up to 0.2.1, then the defaults.
     static func get(_ rule: Rule, uuid: String) -> SettingRule {
+        if uuid == FakeMonitor.uuid, let value = fakeRules[rule] { return value }
         let d = UserDefaults.standard
         func value<T>(_ key: String) -> T? { d.object(forKey: uuid + "." + key) as? T ?? d.object(forKey: key) as? T }
         return SettingRule(enabled: value(rule.state + "Set" + rule.what) ?? rule.fallback.enabled,
@@ -38,9 +39,12 @@ enum Preferences {
     }
 
     static func set(_ rule: Rule, uuid: String, _ value: SettingRule) {
+        if uuid == FakeMonitor.uuid { fakeRules[rule] = value; return }
         UserDefaults.standard.set(value.enabled, forKey: uuid + "." + rule.state + "Set" + rule.what)
         UserDefaults.standard.set(value.value, forKey: uuid + "." + rule.state + rule.what)
     }
+
+    private static var fakeRules: [Rule: SettingRule] = [:]   // the fake monitor's, for this launch only
 
     static func profile(hdrOn: Bool, uuid: String) -> SettingRule { get(hdrOn ? .onProfile : .offProfile, uuid: uuid) }
     static func dimming(hdrOn: Bool, uuid: String) -> SettingRule { get(hdrOn ? .onDimming : .offDimming, uuid: uuid) }
@@ -104,6 +108,7 @@ final class SettingsModel: ObservableObject {
         for (uuid, identity) in HCMyMonitors().sorted(by: { $0.key < $1.key }) where !named.contains(where: { $0.uuid == uuid }) {
             named.append((uuid, identity["product_name"] as? String ?? "Monitor"))
         }
+        if let name = FakeMonitor.name { named.append((FakeMonitor.uuid, name)) }
         return named.map { m in
             let shared = named.filter { $0.name == m.name }.count > 1
             return Monitor(uuid: m.uuid, title: shared ? "\(m.name) (\(m.uuid.prefix(8)))" : m.name)

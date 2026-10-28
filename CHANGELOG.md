@@ -11,12 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Several external monitors: the menu bar app's panel has a section for each (its name, HDR switch, color profile and local dimming), with the refresh button by the first name; it refreshes them all and looks for newly connected monitors. With none connected, the panel says so. Settings are kept for each monitor, with a **Monitor** menu at the top of the settings window when there's more than one; Detect Monitor runs on the monitor shown there. A monitor without its own settings starts from those saved before (0.2.1 kept one set).
 - `hdrctl list` shows each display's UUID, and marks the built-in one.
+- Menu bar app: for trying the layout with two monitors, `open "HDR Switch.app" --args -fakeMonitor "<name>"` adds a made-up, unsupported monitor to the panel and Settings. Nothing is sent to it, its switch shows the color profile from its settings, and its settings are kept for that launch only.
 
 ### Changed
 
 - Monitors are told apart by their display UUID, the one macOS keeps for each monitor, instead of by name: the app no longer looks only for a display named M27P6S, and `hdrctl` without `--display` uses the only external display (with several, `--display` takes part of a name or a UUID). DDC is sent over the connection of the display's own port, found in the IORegistry, so two identical monitors each get their own.
 - `my_monitor.json` holds one monitor per display UUID, `{ "<UUID>": { "hash": …, "identity": … } }`. A display's entry is added the first time it's used; an existing one-monitor file is converted when that monitor is next read. 0.2.1 and older don't read the new format (they change nothing until `hdrctl identify --save`), and neither does the Windows port yet.
 - Menu bar app: when local dimming isn't available, Settings suggests Detect Monitor.
+- Menu bar app: the settings window resizes whenever its content changes (e.g. choosing a monitor whose settings show a note), not only after a detection is saved or deleted.
 
 - Menu bar app: the settings window starts with the name of the monitor its settings are for.
 - Menu bar app: the settings window matches the panel: each section is a panel under its heading, with a separator between its rows; the checkboxes are on the left and the System Settings-style menus on the right (dimmed while unchecked). Settings, Detect Monitor and Detected Monitor are near white in light mode, like the panel.

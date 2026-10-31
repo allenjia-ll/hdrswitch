@@ -315,8 +315,8 @@ struct SettingsView: View {
                     }
                 }
             }
-            // Only the installed app: uninstall.sh removes /Applications/HDR Switch.app, not a build folder.
-            if Bundle.main.bundlePath == "/Applications/HDR Switch.app" {
+            // Only an installed app: uninstall.sh refuses to remove a build folder.
+            if ["/Applications/HDR Switch.app", NSHomeDirectory() + "/Applications/HDR Switch.app"].contains(Bundle.main.bundlePath) {
                 HStack {
                     Spacer()
                     Button("Uninstall HDR Switch…", action: uninstall)
@@ -349,6 +349,38 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+}
+
+// Uninstall HDR Switch…: the choice in its window. A class rather than @State (see HoverState).
+final class UninstallChoice: ObservableObject {
+    @Published var deleteData = false
+}
+
+struct UninstallView: View {
+    @ObservedObject var choice: UninstallChoice
+    let cancel: () -> Void
+    let uninstall: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Uninstall HDR Switch?")
+                .font(.system(size: 13, weight: .bold))
+            Text("This removes HDR Switch from Applications, and hdrctl if it's installed.")
+                .font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("Also delete my settings and detected monitors", isOn: $choice.deleteData)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 13))
+            HStack {
+                Spacer()
+                Button("Uninstall", action: uninstall)
+                Button("Cancel", action: cancel)
+                    .keyboardShortcut(.defaultAction)   // Return is the safe choice
+            }
+        }
+        .padding(20)
+        .frame(width: 400, alignment: .leading)
     }
 }
 

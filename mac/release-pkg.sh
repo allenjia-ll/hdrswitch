@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build the installer: dist/hdrswitch-<version>-macos-arm64.pkg (at the repo root), with its SHA-256.
-# It installs HDR Switch.app in /Applications and, if chosen on the setup screen, hdrctl: the binary and
-# monitor_db.json in /usr/local/lib/hdrswitch (hdrctl finds the database beside its real path), with a
-# link in /usr/local/bin. The package isn't signed: that needs an Apple Developer ID.
+# It installs for the current user, without a password: HDR Switch.app in ~/Applications and, if chosen
+# on the setup screen, hdrctl: the binary and monitor_db.json in ~/.local/lib/hdrswitch (hdrctl finds
+# the database beside its real path), with a link in ~/.local/bin. The package isn't signed: that needs
+# an Apple Developer ID.
 # Usage: mac/release-pkg.sh <version>    e.g. mac/release-pkg.sh 0.3.1
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -24,11 +25,11 @@ APP="app/build/HDR Switch.app"
 codesign --force --sign - "$APP"
 
 rm -rf "$WORK" "$DIST/$NAME.pkg"
-mkdir -p "$WORK/app" "$WORK/cli/usr/local/lib/hdrswitch" "$WORK/cli/usr/local/bin" "$WORK/resources"
+mkdir -p "$WORK/app" "$WORK/cli/.local/lib/hdrswitch" "$WORK/cli/.local/bin" "$WORK/resources"
 ditto "$APP" "$WORK/app/HDR Switch.app"
-cp hdrctl "$WORK/cli/usr/local/lib/hdrswitch/hdrctl"
-cp "$ROOT/monitor_db.json" "$WORK/cli/usr/local/lib/hdrswitch/monitor_db.json"
-ln -s ../lib/hdrswitch/hdrctl "$WORK/cli/usr/local/bin/hdrctl"
+cp hdrctl "$WORK/cli/.local/lib/hdrswitch/hdrctl"
+cp "$ROOT/monitor_db.json" "$WORK/cli/.local/lib/hdrswitch/monitor_db.json"
+ln -s ../lib/hdrswitch/hdrctl "$WORK/cli/.local/bin/hdrctl"
 
 # Not relocatable: otherwise the installer updates any copy it finds, such as a build folder. Not
 # version checked: CFBundleVersion stays at 1, so an upgrade could be skipped.
@@ -37,7 +38,7 @@ plutil -replace 0.BundleIsRelocatable -bool false "$WORK/app.plist"
 plutil -replace 0.BundleIsVersionChecked -bool false "$WORK/app.plist"
 pkgbuild --root "$WORK/app" --component-plist "$WORK/app.plist" --install-location /Applications \
   --scripts pkg/scripts --identifier io.github.allenjia-ll.hdrswitch.app --version "$VERSION" "$WORK/app.pkg" >/dev/null
-pkgbuild --root "$WORK/cli" --install-location / \
+pkgbuild --root "$WORK/cli" --install-location / --scripts pkg/scripts-cli \
   --identifier io.github.allenjia-ll.hdrswitch.cli --version "$VERSION" "$WORK/cli.pkg" >/dev/null
 
 cp pkg/resources/* "$WORK/resources/"

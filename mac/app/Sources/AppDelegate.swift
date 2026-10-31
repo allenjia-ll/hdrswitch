@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: TranslucentWindow?
     private var detectionWindow: NSWindow?
     private var detectedWindow: NSWindow?
+    private var uninstallWindow: NSWindow?
     private var outsideClickMonitor: Any?
     private var modelChanges: AnyCancellable?
     private var settingsChanges: AnyCancellable?
@@ -150,32 +151,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         detectedMonitorsChanged()
     }
 
-    // Uninstall HDR Switch…, from Settings: asks, then runs uninstall.sh as administrator. macOS asks for
-    // the password. On success the script quits this app.
+    // Uninstall HDR Switch…, from Settings: asks in a window of its own, with the data checkbox. It's not
+    // an NSAlert because an accessory checkbox there didn't appear on screen in the installed app.
     private func uninstall() {
-        guard let script = Bundle.main.path(forResource: "uninstall", ofType: "sh") else { return }
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Uninstall HDR Switch?"
-        alert.informativeText = "This removes HDR Switch from Applications, and hdrctl if it's installed."
-        let deleteData = NSButton(checkboxWithTitle: "Also delete my settings and detected monitors", target: nil, action: nil)
-        deleteData.state = .off
-        deleteData.sizeToFit()
-        alert.accessoryView = deleteData
-        alert.addButton(withTitle: "Cancel")   // first, so Return is the safe choice
-        alert.addButton(withTitle: "Uninstall")
-        guard alert.runModal() == .alertSecondButtonReturn else { return }
-        let option = deleteData.state == .on ? " --delete-data" : ""
-        let source = "do shell script quoted form of \"\(script)\" & \"\(option)\" with administrator privileges"
-        var error: NSDictionary?
-        NSAppleScript(source: source)?.executeAndReturnError(&error)
-        // -128: the password prompt was cancelled.
-        if let error = error, error[NSAppleScript.errorNumber] as? Int != -128 {
-            let failed = NSAlert()
-            failed.messageText = "Couldn't uninstall HDR Switch"
-            failed.informativeText = error[NSAppleScript.errorMessage] as? String ?? "Unknown error."
-            failed.runModal()
+        if uninstallWindow?.isVisible != true {
+            let choice = UninstallChoice()
+            uninstallWindow = makeTranslucentWindow(title: "Uninstall HDR Switch",
+                                                    content: UninstallView(choice: choice, cancel: { [weak self] in
+                                                        self?.uninstallWindow?.close()
+                                                    }, uninstall: { [weak self] in
+                                                        self?.uninstallWindow?.close()
+                                                        self?.runUninstall(deleteData: choice.deleteData)
+                                                    }))
         }
+        NSApp.activate(ignoringOtherApps: true)
+        uninstallWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    // Runs uninstall.sh, which needs no password, then quits: the app is gone from disk.
+    private func runUninstall(deleteData: Bool) {
+        guard let script = Bundle.main.path(forResource: "uninstall", ofType: "sh") else { return }
+        let process = Process()
+        let errors = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [script] + (deleteData ? ["--delete-data"] : [])
+        process.standardError = errors
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {}
+        guard process.terminationStatus != 0 else { NSApp.terminate(nil); return }
+        let failed = NSAlert()
+        failed.messageText = "Couldn't uninstall HDR Switch"
+        failed.informativeText = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "Unknown error."
+        failed.runModal()
     }
 
     // local_monitor_db.json was saved or cleared: read the monitors again, since their levels may

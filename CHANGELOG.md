@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The PKG installs for the current user, with no password: the app in `~/Applications` and, if chosen, `hdrctl` in `~/.local/bin`, with a message saying where it went. Uninstalling needs no password either.
+
+### Fixed
+
+- Menu bar app: the **Also delete my settings and detected monitors** checkbox didn't appear when uninstalling. Uninstall now asks in a window of its own.
+- Uninstalling, and installing the PKG, only quit the app in `/Applications`, not a copy running from a build folder.
+- Menu bar app: after uninstalling from Settings, the app always quits, instead of relying on the script to stop it.
+
 ## [0.3.1] - 2026-10-31
 
 Several monitors at once, told apart by their display UUID, a brightness slider, and a new installer.

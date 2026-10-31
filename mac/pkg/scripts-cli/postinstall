@@ -1,0 +1,11 @@
+#!/bin/sh
+# Runs only if the command line tool was chosen: tells the user where it went. Not waited for, so the
+# installer can finish behind the message.
+osascript -e 'display dialog "hdrctl is installed in ~/.local/bin.
+
+To run it from Terminal, add that folder to your PATH:
+
+echo '"'"'export PATH=\"$HOME/.local/bin:$PATH\"'"'"' >> ~/.zshrc
+
+Then open a new Terminal window." with title "HDR Switch" buttons {"OK"} default button 1 giving up after 600' >/dev/null 2>&1 &
+exit 0

@@ -1,8 +1,7 @@
 #!/bin/sh
-# Restarts the app as the logged-in user, so the new version runs and checks the monitor.
-pkill -x HDRSwitch
-user=$(stat -f %Su /dev/console)
-if [ "$user" != root ] && [ "$user" != loginwindow ]; then
-    launchctl asuser "$(id -u "$user")" sudo -u "$user" open "/Applications/HDR Switch.app"
-fi
+# Restarts the app, so the new version runs and checks the monitor. The package installs for the current
+# user, and this runs as that user.
+app="$HOME/Applications/HDR Switch.app"
+pkill -f "^$app/Contents/MacOS/HDRSwitch"
+open "$app"
 exit 0

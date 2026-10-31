@@ -120,9 +120,17 @@ There are two ways to install, built with these scripts:
 - **PKG** (`mac/release-pkg.sh <version>`, `dist/hdrswitch-<version>-macos-arm64.pkg`): the guided installer, with the copyright and license, and the option to add `hdrctl`.
 - **DMG** (`mac/app/release.sh <version>`, `dist/hdrswitch-<version>-macos-arm64.dmg`): the app only. Drag it to Applications.
 
-Opening the PKG installs `HDR Switch.app` in `/Applications`; on the setup screen, **Command line tool** also installs `hdrctl` in `/usr/local/bin` (a link to `/usr/local/lib/hdrswitch`, which also holds its `monitor_db.json`; it replaces an existing link of that name). It asks for your password, and opens the app when it finishes. If your monitor isn't in the database, the app says so once and offers to open Settings, where **Detect Monitor…** adds it.
+Opening the PKG installs `HDR Switch.app` in `~/Applications`, for you only and without a password. On the setup screen, **Command line tool** also installs `hdrctl` in `~/.local/bin` (a link to `~/.local/lib/hdrswitch`, which also holds its `monitor_db.json`), and a message says where it went. That folder isn't on your `PATH` by default; to add it:
 
-The package isn't signed, so macOS blocks it the first time: choose **Open Anyway** in System Settings > Privacy & Security. To uninstall either one, choose **Uninstall HDR Switch…** in Settings, which removes the app and, if the PKG installed it, `hdrctl`. **Also delete my settings and detected monitors** removes `~/Library/Application Support/HDR Switch/` too, and is unchecked by default. From Terminal: `sudo "/Applications/HDR Switch.app/Contents/Resources/uninstall.sh" [--delete-data]`. A `/usr/local/bin/hdrctl` link you made yourself stays.
+```sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+```
+
+The installer opens the app when it finishes. If your monitor isn't in the database, the app says so once and offers to open Settings, where **Detect Monitor…** adds it.
+
+The package isn't signed, so macOS blocks it the first time: choose **Open Anyway** in System Settings > Privacy & Security.
+
+To uninstall either one, choose **Uninstall HDR Switch…** in Settings, which removes the app and, if the PKG installed it, `hdrctl`, without a password. **Also delete my settings and detected monitors** removes `~/Library/Application Support/HDR Switch/` too, and is unchecked by default. From Terminal: `"$HOME/Applications/HDR Switch.app/Contents/Resources/uninstall.sh" [--delete-data]`. A `~/.local/bin/hdrctl` link you made yourself stays.
 
 ### Set up your monitor (macOS)
 

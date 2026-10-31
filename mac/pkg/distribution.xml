@@ -6,7 +6,8 @@
     <conclusion file="conclusion.html" mime-type="text/html"/>
     <!-- customize="always" opens the setup screen with the checkboxes instead of hiding it behind a button -->
     <options customize="always" require-scripts="false" hostArchitectures="arm64"/>
-    <domains enable_localSystem="true" enable_currentUserHome="false" enable_anywhere="false"/>
+    <!-- For the current user only: paths below are under their home folder, and no password is needed -->
+    <domains enable_localSystem="false" enable_currentUserHome="true" enable_anywhere="false"/>
     <volume-check>
         <allowed-os-versions><os-version min="12.0"/></allowed-os-versions>
     </volume-check>
@@ -14,12 +15,12 @@
         <line choice="app"/>
         <line choice="cli"/>
     </choices-outline>
-    <choice id="app" title="HDR Switch" description="The menu bar app, in /Applications." enabled="false" start_selected="true">
+    <choice id="app" title="HDR Switch" description="The menu bar app, in your Applications folder (~/Applications)." enabled="false" start_selected="true">
         <pkg-ref id="io.github.allenjia-ll.hdrswitch.app"/>
     </choice>
-    <choice id="cli" title="Command line tool" description="Also install hdrctl in /usr/local/bin." start_selected="false">
+    <choice id="cli" title="Command line tool" description="Also install hdrctl in ~/.local/bin." start_selected="false">
         <pkg-ref id="io.github.allenjia-ll.hdrswitch.cli"/>
     </choice>
-    <pkg-ref id="io.github.allenjia-ll.hdrswitch.app" version="@VERSION@" auth="root">app.pkg</pkg-ref>
-    <pkg-ref id="io.github.allenjia-ll.hdrswitch.cli" version="@VERSION@" auth="root">cli.pkg</pkg-ref>
+    <pkg-ref id="io.github.allenjia-ll.hdrswitch.app" version="@VERSION@" auth="none">app.pkg</pkg-ref>
+    <pkg-ref id="io.github.allenjia-ll.hdrswitch.cli" version="@VERSION@" auth="none">cli.pkg</pkg-ref>
 </installer-gui-script>

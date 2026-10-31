@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-31
+
+The README now leads with the menu bar app. The app and `hdrctl` are unchanged since 0.3.3. Windows is
+unchanged since 0.1.7-win and no new Windows binary ships here.
+
+### Changed
+
+- README: screenshots of the panel and Settings, a new opening, and a link to the latest download. The command line is in its own section.
+
 ## [0.3.3] - 2026-10-31
 
 The PKG now always installs `hdrctl`, so it can't fall behind the app, and the DMG is built with
@@ -214,7 +223,8 @@ unchanged since 0.1.6 and no new macOS binary ships here.
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/allenjia-ll/hdrswitch/compare/v0.2.1...v0.3.1

@@ -1,6 +1,20 @@
 # HDR Switch
 
-Toggle HDR, the color profile and the monitor's local dimming of an external display in one command, on macOS and Windows 10/11.
+Switch HDR on your external monitors from the Mac menu bar in one click, along with the color profile, local dimming and brightness you choose.
+
+<p align="center">
+  <img src="docs/images/popup.png" alt="The HDR Switch menu bar panel, with the HDR switch, color profile, local dimming and brightness" width="300" align="top">
+  <img src="docs/images/settings.png" alt="HDR Switch Settings, with what to set when HDR is turned on and off" width="440" align="top">
+</p>
+
+**[Download the latest version](https://github.com/allenjia-ll/hdrswitch/releases/latest)** for macOS 12 or later on Apple Silicon. It's free and open source. See [Supported monitors](#supported-monitors) for what works on yours.
+
+> [!WARNING]
+> **Use at your own risk.** This is an unofficial tool, not affiliated with or endorsed by the monitor's manufacturer or Apple. It uses private, undocumented macOS APIs (SkyLight, IOAVService) and writes a vendor-specific monitor setting (VCP 0xF4) that was found by trial, not taken from vendor documentation. It has been tested on one M27P6S on Apple Silicon only. Safety checks limit what it writes (see [Safety checks](#safety-checks)), but they can't rule out every firmware difference. A wrong setting can usually be undone with a factory reset from the monitor's own menu. The authors accept no liability for any damage, data loss or warranty issues. See [LICENSE](LICENSE).
+
+## Command line
+
+`hdrctl` does the same from Terminal, on macOS and Windows 10/11. It runs once and exits: no background app, no daemon.
 
 | Command | HDR | Color profile | Local dimming |
 |---|---|---|---|
@@ -8,11 +22,6 @@ Toggle HDR, the color profile and the monitor's local dimming of an external dis
 | `off` | off | Display P3 | Off |
 
 On Windows the color profile isn't changed yet; `on` and `off` do HDR and local dimming only.
-
-It runs once and exits: no background app, no daemon.
-
-> [!WARNING]
-> **Use at your own risk.** This is an unofficial tool, not affiliated with or endorsed by the monitor's manufacturer or Apple. It uses private, undocumented macOS APIs (SkyLight, IOAVService) and writes a vendor-specific monitor setting (VCP 0xF4) that was found by trial, not taken from vendor documentation. It has been tested on one M27P6S on Apple Silicon only. Safety checks limit what it writes (see [Safety checks](#safety-checks)), but they can't rule out every firmware difference. A wrong setting can usually be undone with a factory reset from the monitor's own menu. The authors accept no liability for any damage, data loss or warranty issues. See [LICENSE](LICENSE).
 
 ## Supported monitors
 
@@ -193,8 +202,8 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 ```sh
 mac/release.sh 0.1.2        # the CLI: dist/hdrswitch-0.1.2-macos-arm64.zip and its SHA-256
-mac/app/release.sh 0.3.3    # the menu bar app: dist/hdrswitch-0.3.3-macos-arm64.dmg and its SHA-256
-mac/release-pkg.sh 0.3.3    # the installer: dist/hdrswitch-0.3.3-macos-arm64.pkg and its SHA-256
+mac/app/release.sh 0.3.4    # the menu bar app: dist/hdrswitch-0.3.4-macos-arm64.dmg and its SHA-256
+mac/release-pkg.sh 0.3.4    # the installer: dist/hdrswitch-0.3.4-macos-arm64.pkg and its SHA-256
 ```
 
 The DMG holds `HDR Switch.app` next to an Applications shortcut to drag it onto. The script sets the app's version from the argument, re-signs it (ad hoc), and checks it's arm64, targets macOS 12, has a valid signature and includes `monitor_db.json`.

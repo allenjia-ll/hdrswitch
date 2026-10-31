@@ -137,6 +137,19 @@ final class MonitorModel: ObservableObject {
         }
     }
 
+    // Below this, the screen may look completely dark: the popup asks first, and Settings doesn't
+    // allow it.
+    static let lowBrightness = 3
+
+    // The slider's value, if it's let go at a new value that needs asking about first.
+    var lowBrightnessDraft: Int? {
+        guard let draft = brightnessDraft.map({ Int($0.rounded()) }), draft < Self.lowBrightness, draft != brightness
+        else { return nil }
+        return draft
+    }
+
+    func cancelBrightness() { brightnessDraft = nil }
+
     // Writes the slider's value when it's let go: each write goes to the monitor's settings memory.
     func commitBrightness() {
         guard let draft = brightnessDraft else { return }

@@ -46,8 +46,11 @@ enum Preferences {
         var err: NSString?
         let monitor = HCLoadSettings(&err)?[uuid] as? [String: Any]
         let saved = (monitor?[rule.state] as? [String: Any])?[rule.what] as? [String: Any]
-        return SettingRule(enabled: saved?["set"] as? Bool ?? rule.fallback.enabled,
-                           value: saved?["value"] as? String ?? (saved?["value"] as? NSNumber)?.stringValue ?? rule.fallback.value)
+        var value = saved?["value"] as? String ?? (saved?["value"] as? NSNumber)?.stringValue ?? rule.fallback.value
+        if rule == .onBrightness || rule == .offBrightness {   // also if the file was edited by hand
+            value = String(min(max(Int(value) ?? Int(rule.fallback.value) ?? 50, minimumBrightness), 100))
+        }
+        return SettingRule(enabled: saved?["set"] as? Bool ?? rule.fallback.enabled, value: value)
     }
 
     static func set(_ rule: Rule, uuid: String, _ value: SettingRule) {
@@ -93,6 +96,8 @@ enum Preferences {
         }
         ours.forEach { d.removeObject(forKey: $0) }
     }
+
+    static let minimumBrightness = MonitorModel.lowBrightness
 
     private static var fakeRules: [Rule: SettingRule] = [:]   // the fake monitor's, for this launch only
 
@@ -344,14 +349,15 @@ struct BrightnessRow: View {
     @Binding var rule: SettingRule
 
     var body: some View {
-        let percent = Double(rule.value) ?? 50
+        let lowest = Double(Preferences.minimumBrightness)
+        let percent = max(Double(rule.value) ?? 50, lowest)
         HStack(spacing: 8) {
             Toggle("Set brightness to", isOn: $rule.enabled)
                 .toggleStyle(.checkbox)
                 .font(.system(size: 13))
             Spacer()
             Group {
-                Slider(value: Binding(get: { percent }, set: { rule.value = String(Int($0.rounded())) }), in: 0...100)
+                Slider(value: Binding(get: { percent }, set: { rule.value = String(Int($0.rounded())) }), in: lowest...100)
                     .controlSize(.small)
                     .frame(width: 120)
                 Text("\(Int(percent))%")

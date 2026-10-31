@@ -168,7 +168,7 @@ struct BrightnessSlider: View {
         if let shown = shown {
             HStack(spacing: 6) {
                 Slider(value: Binding(get: { shown }, set: { model.brightnessDraft = $0 }), in: 0...100,
-                       onEditingChanged: { editing in if !editing { model.commitBrightness() } })
+                       onEditingChanged: { editing in if !editing { letGo() } })
                     .controlSize(.small)
                 Text("\(Int(shown.rounded()))%")
                     .font(.system(size: 13))
@@ -181,6 +181,28 @@ struct BrightnessSlider: View {
                 .font(.system(size: 13))
                 .padding(.trailing, 26)
         }
+    }
+
+    private func letGo() {
+        guard let percent = model.lowBrightnessDraft else { model.commitBrightness(); return }
+        // After the mouse-up, so the slider finishes tracking before the alert's modal loop starts.
+        DispatchQueue.main.async {
+            if confirmLowBrightness(percent) { model.commitBrightness() } else { model.cancelBrightness() }
+        }
+    }
+
+    private func confirmLowBrightness(_ percent: Int) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Set brightness to \(percent)%?"
+        alert.informativeText = "At very low brightness, your monitor can look completely dark and you may not be able "
+            + "to see anything on it. If that happens, raise the brightness from this menu on another screen, or with "
+            + "the monitor's own buttons."
+        alert.addButton(withTitle: "Cancel")   // first, so Return is the safe choice
+        alert.addButton(withTitle: "Confirm")
+        alert.window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)   // above the popup
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertSecondButtonReturn
     }
 }
 

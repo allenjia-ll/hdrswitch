@@ -336,7 +336,7 @@ The hash must be a key in `monitor_db.json` or `local_monitor_db.json`. On Windo
 }
 ```
 
-The menu bar app also writes brightness (VCP `0x10`, a standard code), after the same check. It's limited to 0–100 % of the range the monitor reports, written and read back only when you let go of the slider or use the HDR switch. `hdrctl` doesn't write brightness.
+The menu bar app also writes brightness (VCP `0x10`, a standard code), after the same check. It's limited to 0–100 % of the range the monitor reports, written and read back only when you let go of the slider or use the HDR switch. Below 3% the screen can look completely dark, so the slider asks you to confirm, with Cancel as the default, and Settings starts at 3% (a lower value edited into `settings.json` is raised to 3%). `hdrctl` doesn't write brightness.
 
 `on` uses the `standard` level and `off` uses `off`. If any value can't be read or the hash isn't in the database (or, on Windows, `my_monitor.json` is invalid or for a different monitor), the tool prints `monitor unknown: <reason>` and exits with status 1 **before** switching HDR or the profile. `list`, `status`, `hdr`, `profile` (macOS), `identify`, `ddc get` and `ddc dump` don't write to the monitor and work on any display.
 

@@ -22,6 +22,7 @@ swiftc -O -swift-version 5 -target arm64-apple-macos12.0 \
 
 cp Info.plist "$APP/Contents/Info.plist"
 cp Resources/* "$APP/Contents/Resources/"
+cp ../pkg/uninstall.sh "$APP/Contents/Resources/"
 cp ../../monitor_db.json "$APP/Contents/Resources/"   # local_monitor_db.json is in ~/Library/Application Support/HDR Switch
 codesign --force --sign - "$APP"   # ad-hoc, required to run on Apple Silicon
 

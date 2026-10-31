@@ -236,11 +236,11 @@ func makeTranslucentWindow<Content: View>(title: String, content: Content) -> Tr
     return w
 }
 
-func makeSettingsWindow(model: SettingsModel, detect: @escaping () -> Void,
-                        viewDetected: @escaping () -> Void, clearDetected: @escaping () -> Void) -> TranslucentWindow {
+func makeSettingsWindow(model: SettingsModel, detect: @escaping () -> Void, viewDetected: @escaping () -> Void,
+                        clearDetected: @escaping () -> Void, uninstall: @escaping () -> Void) -> TranslucentWindow {
     makeTranslucentWindow(title: "HDR Switch Settings",
                           content: SettingsView(model: model, detect: detect, viewDetected: viewDetected,
-                                                clearDetected: clearDetected))
+                                                clearDetected: clearDetected, uninstall: uninstall))
 }
 
 struct SettingsView: View {
@@ -248,6 +248,7 @@ struct SettingsView: View {
     let detect: () -> Void
     let viewDetected: () -> Void
     let clearDetected: () -> Void
+    let uninstall: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -312,6 +313,13 @@ struct SettingsView: View {
                             }
                         }
                     }
+                }
+            }
+            // Only the installed app: uninstall.sh removes /Applications/HDR Switch.app, not a build folder.
+            if Bundle.main.bundlePath == "/Applications/HDR Switch.app" {
+                HStack {
+                    Spacer()
+                    Button("Uninstall HDR Switch…", action: uninstall)
                 }
             }
         }

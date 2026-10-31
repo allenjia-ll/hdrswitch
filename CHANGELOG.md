@@ -7,12 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-31
+
+Several monitors at once, told apart by their display UUID, a brightness slider, and a new installer.
+The macOS app ships as a PKG (with `hdrctl` as an option) and a DMG (the app only), and can uninstall
+itself from Settings. `my_monitor.json` is gone on macOS, and Settings are in `settings.json`, which
+`hdrctl` reads too. Windows is unchanged since 0.1.7-win and no new Windows binary ships here.
+
 ### Added
 
 - Menu bar app: a brightness slider in the panel, for supported monitors. It reads VCP `0x10` from the monitor and writes it when let go, after the same identity check as other writes. In Settings, **Set brightness to** under HDR on and HDR off sets a percentage with the HDR switch, after local dimming; it's unchecked by default. Setting less than 3% with the slider asks first (the screen can look completely dark), and Settings doesn't allow it.
 - Several external monitors: the menu bar app's panel has a section for each (its name, HDR switch, color profile and local dimming), with the refresh button by the first name; it refreshes them all and looks for newly connected monitors. With none connected, the panel says so. Settings are kept for each monitor, by display UUID, with a **Monitor** menu at the top of the settings window when there's more than one connected; Detect Monitor runs on the monitor shown there. 0.2.1's one set of settings moves to the monitors connected at the first launch.
 - `hdrctl list` shows each display's UUID, and marks the built-in one.
 - `mac/release-pkg.sh <version>`: builds an installer, `dist/hdrswitch-<version>-macos-arm64.pkg`, with the app in `/Applications` and, if checked on the setup screen, `hdrctl` in `/usr/local/bin`. It shows the copyright and license, and opens the app when it finishes.
+- Menu bar app: **Uninstall HDR Switch…** in Settings, in the installed app, removes the app and `hdrctl`, and optionally the data folder (unchecked by default). `uninstall.sh` inside the app does the same from Terminal.
 - Menu bar app: it checks the monitors when it starts, and the first time one isn't in the database, it says so and offers to open Settings, where Detect Monitor adds it.
 - `hdrctl on`, `off` and `toggle` read `settings.json`: the color profile comes from `--hdr-profile` / `--sdr-profile`, then `settings.json`, then the default, and local dimming from `settings.json`, then the monitor's database entry, then the default. `"set": false` leaves that setting alone. A profile that isn't installed, or a level the monitor doesn't have, stops before anything changes.
 - Menu bar app: for trying the layout with two monitors, `open "HDR Switch.app" --args -fakeMonitor "<name>"` adds a made-up, unsupported monitor to the panel and Settings. Nothing is sent to it, its switch shows the color profile from its settings, and its settings are kept for that launch only.
@@ -172,7 +180,8 @@ unchanged since 0.1.6 and no new macOS binary ships here.
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/allenjia-ll/hdrswitch/compare/v0.2.1...v0.3.1
 [0.2.1]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.8-mac...v0.2.1
 [0.1.8-mac]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.7-win...v0.1.8-mac
 [0.1.7-win]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.6...v0.1.7-win

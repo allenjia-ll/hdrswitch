@@ -3,7 +3,7 @@
 # It installs HDR Switch.app in /Applications and, if chosen on the setup screen, hdrctl: the binary and
 # monitor_db.json in /usr/local/lib/hdrswitch (hdrctl finds the database beside its real path), with a
 # link in /usr/local/bin. The package isn't signed: that needs an Apple Developer ID.
-# Usage: mac/release-pkg.sh <version>    e.g. mac/release-pkg.sh 0.3.0
+# Usage: mac/release-pkg.sh <version>    e.g. mac/release-pkg.sh 0.3.1
 set -euo pipefail
 cd "$(dirname "$0")"
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build the menu bar app and package it: dist/hdrswitch-<version>-macos-arm64.dmg (at the repo root),
 # with its SHA-256. Opening the DMG shows HDR Switch.app next to an Applications shortcut to drag it
-# onto. The CLI zip is separate (mac/release.sh).
-# Usage: mac/app/release.sh <version>    e.g. mac/app/release.sh 0.2.1
+# onto. It holds only the app: the installer with the CLI option is mac/release-pkg.sh, and the CLI zip
+# is mac/release.sh.
+# Usage: mac/app/release.sh <version>    e.g. mac/app/release.sh 0.3.1
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -29,6 +30,7 @@ minos="$(otool -l "$BIN" | awk '/LC_BUILD_VERSION/ {f=1} f && $1=="minos" {print
 [[ "$minos" == "12.0" ]] || { echo "the app's minimum macOS is $minos, expected 12.0" >&2; exit 1; }
 codesign --verify --deep --strict "$APP" || { echo "the app's signature doesn't verify" >&2; exit 1; }
 [[ -f "$APP/Contents/Resources/monitor_db.json" ]] || { echo "monitor_db.json is missing from the app" >&2; exit 1; }
+[[ -x "$APP/Contents/Resources/uninstall.sh" ]] || { echo "uninstall.sh is missing from the app" >&2; exit 1; }
 
 rm -rf "$STAGE" "$DIST/$NAME.dmg"
 mkdir -p "$STAGE"

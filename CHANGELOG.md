@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The PKG always installs `hdrctl`, so it stays the same version as the app. The setup screen and its checkbox are gone, along with the message saying where `hdrctl` went; the installer's last screen says so instead.
+
 ## [0.3.2] - 2026-10-31
 
 The PKG now installs for the current user with no password, and uninstalling needs none either. The app

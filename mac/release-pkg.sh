@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build the installer: dist/hdrswitch-<version>-macos-arm64.pkg (at the repo root), with its SHA-256.
-# It installs for the current user, without a password: HDR Switch.app in ~/Applications and, if chosen
-# on the setup screen, hdrctl: the binary and monitor_db.json in ~/.local/lib/hdrswitch (hdrctl finds
-# the database beside its real path), with a link in ~/.local/bin. The package isn't signed: that needs
+# It installs for the current user, without a password: HDR Switch.app in ~/Applications and hdrctl,
+# the binary and monitor_db.json in ~/.local/lib/hdrswitch (hdrctl finds the database beside its real
+# path), with a link in ~/.local/bin. The package isn't signed: that needs
 # an Apple Developer ID.
 # Usage: mac/release-pkg.sh <version>    e.g. mac/release-pkg.sh 0.3.1
 set -euo pipefail
@@ -35,7 +35,7 @@ plutil -replace 0.BundleIsRelocatable -bool false "$WORK/app.plist"
 plutil -replace 0.BundleIsVersionChecked -bool false "$WORK/app.plist"
 pkgbuild --root "$WORK/app" --component-plist "$WORK/app.plist" --install-location /Applications \
   --scripts pkg/scripts --identifier io.github.allenjia-ll.hdrswitch.app --version "$VERSION" "$WORK/app.pkg" >/dev/null
-pkgbuild --root "$WORK/cli" --install-location / --scripts pkg/scripts-cli \
+pkgbuild --root "$WORK/cli" --install-location / \
   --identifier io.github.allenjia-ll.hdrswitch.cli --version "$VERSION" "$WORK/cli.pkg" >/dev/null
 
 cp pkg/resources/* "$WORK/resources/"

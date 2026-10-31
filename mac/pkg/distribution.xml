@@ -4,21 +4,17 @@
     <welcome file="welcome.html" mime-type="text/html"/>
     <license file="LICENSE.txt"/>
     <conclusion file="conclusion.html" mime-type="text/html"/>
-    <!-- customize="always" opens the setup screen with the checkboxes instead of hiding it behind a button -->
-    <options customize="always" require-scripts="false" hostArchitectures="arm64"/>
+    <options customize="never" require-scripts="false" hostArchitectures="arm64"/>
     <!-- For the current user only: paths below are under their home folder, and no password is needed -->
     <domains enable_localSystem="false" enable_currentUserHome="true" enable_anywhere="false"/>
     <volume-check>
         <allowed-os-versions><os-version min="12.0"/></allowed-os-versions>
     </volume-check>
     <choices-outline>
-        <line choice="app"/>
-        <line choice="cli"/>
+        <line choice="default"/>
     </choices-outline>
-    <choice id="app" title="HDR Switch" description="The menu bar app, in your Applications folder (~/Applications)." enabled="false" start_selected="true">
+    <choice id="default" title="HDR Switch">
         <pkg-ref id="io.github.allenjia-ll.hdrswitch.app"/>
-    </choice>
-    <choice id="cli" title="Command line tool" description="Also install hdrctl in ~/.local/bin." start_selected="false">
         <pkg-ref id="io.github.allenjia-ll.hdrswitch.cli"/>
     </choice>
     <pkg-ref id="io.github.allenjia-ll.hdrswitch.app" version="@VERSION@" auth="none">app.pkg</pkg-ref>

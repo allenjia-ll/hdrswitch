@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Menu bar app: a brightness slider in the panel, for supported monitors. It reads VCP `0x10` from the monitor and writes it when let go, after the same identity check as other writes. In Settings, **Set brightness to** under HDR on and HDR off sets a percentage with the HDR switch, after local dimming; it's unchecked by default.
 - Several external monitors: the menu bar app's panel has a section for each (its name, HDR switch, color profile and local dimming), with the refresh button by the first name; it refreshes them all and looks for newly connected monitors. With none connected, the panel says so. Settings are kept for each monitor, by display UUID, with a **Monitor** menu at the top of the settings window when there's more than one connected; Detect Monitor runs on the monitor shown there. 0.2.1's one set of settings moves to the monitors connected at the first launch.
 - `hdrctl list` shows each display's UUID, and marks the built-in one.
 - Menu bar app: for trying the layout with two monitors, `open "HDR Switch.app" --args -fakeMonitor "<name>"` adds a made-up, unsupported monitor to the panel and Settings. Nothing is sent to it, its switch shows the color profile from its settings, and its settings are kept for that launch only.

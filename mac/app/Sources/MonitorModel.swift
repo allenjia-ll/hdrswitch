@@ -49,6 +49,8 @@ final class MonitorModel: ObservableObject {
     @Published private(set) var support = Support.unknown
     @Published private(set) var dimming = "Unknown"
     @Published private(set) var dimmingLevels: [String] = []     // from monitor_db.json, by value
+    @Published private(set) var brightness: Int?                 // %, for a supported monitor, once read
+    @Published var brightnessDraft: Double?                      // while the slider is being dragged
     @Published private(set) var switching = false                // HDR toggle running
     @Published private(set) var busy = false                     // any lookup or change running
     @Published private(set) var warning: String?
@@ -103,8 +105,9 @@ final class MonitorModel: ObservableObject {
         guard canChange, let d = findDisplay() else { return }
         let on = !HCIsHDR(d)
         let profileRule = Preferences.profile(hdrOn: on, uuid: uuid), dimmingRule = Preferences.dimming(hdrOn: on, uuid: uuid)
+        let brightnessRule = Preferences.brightness(hdrOn: on, uuid: uuid)
         switching = true
-        let skipped = dimmingRule.enabled ? Self.notChanged : nil   // nothing to skip if unchecked
+        let skipped = dimmingRule.enabled || brightnessRule.enabled ? Self.notChanged : nil   // nothing to skip if unchecked
         run(d, warnIfSkipped: skipped) { lookup in
             var err: NSString?
             // Resolve both first, so a missing profile or level fails before anything changes.
@@ -126,7 +129,24 @@ final class MonitorModel: ObservableObject {
                !HCSetDimming(dim.av, dim.code, level.uint16Value, dimmingRule.value) {
                 return Self.notConfirmed
             }
+            if brightnessRule.enabled, let dim = lookup.dimming, let percent = Int(brightnessRule.value),
+               !HCSetBrightness(dim.av, Int32(percent)) {
+                return Self.brightnessNotConfirmed
+            }
             return nil
+        }
+    }
+
+    // Writes the slider's value when it's let go: each write goes to the monitor's settings memory.
+    func commitBrightness() {
+        guard let draft = brightnessDraft else { return }
+        brightnessDraft = nil
+        let percent = Int(draft.rounded())
+        guard canChange, percent != brightness, support == .supported, let d = findDisplay() else { return }
+        brightness = percent
+        run(d, warnIfSkipped: Self.brightnessNotChanged) { lookup in
+            guard let dim = lookup.dimming else { return nil }
+            return HCSetBrightness(dim.av, Int32(percent)) ? nil : Self.brightnessNotConfirmed
         }
     }
 
@@ -155,6 +175,8 @@ final class MonitorModel: ObservableObject {
     static let timeoutNotChanged = "The monitor didn't respond within 3 seconds, so its local dimming setting wasn't changed."
     static let noReplyWarning = "The monitor didn't answer over DDC, so its local dimming setting is unknown. Try Refresh."
     static let notChanged = "The monitor didn't answer over DDC, so its local dimming setting wasn't changed. Try again in a moment."
+    static let brightnessNotChanged = "The monitor didn't answer over DDC, so its brightness wasn't changed. Try again in a moment."
+    static let brightnessNotConfirmed = "Couldn't confirm the brightness change. The monitor may lock brightness in this mode, or another DDC app (e.g. MonitorControl) may be using it."
     static let notConfirmed = "Couldn't confirm the local dimming change. Another DDC app (e.g. MonitorControl) may be using the monitor."
 
     // MARK: - Private
@@ -256,6 +278,7 @@ final class MonitorModel: ObservableObject {
         let support: Support
         let dimming: String
         let levels: [String]
+        let brightness: Int?
         let unreachable: Bool   // DDC didn't answer (or timed out), so local dimming is unknown
         let timedOut: Bool
     }
@@ -275,6 +298,14 @@ final class MonitorModel: ObservableObject {
                 }
             }
         }
+        var percent: Int32 = 0
+        var brightness: Int?
+        if let dim = lookup.dimming {
+            for attempt in 0..<5 where brightness == nil && !HCDDCDidTimeOut() {
+                if attempt > 0 { usleep(300_000) }
+                if HCGetBrightness(dim.av, &percent) { brightness = Int(percent) }
+            }
+        }
         let timedOut = HCDDCDidTimeOut()
         let support: Support
         switch lookup {
@@ -284,7 +315,7 @@ final class MonitorModel: ObservableObject {
         }
         let unreachable = timedOut || support == .unknown || (support == .supported && level == "Unknown")
         return Snapshot(hdrOn: HCIsHDR(d), profile: HCCurrentProfile(d), support: support, dimming: level,
-                        levels: levels, unreachable: unreachable, timedOut: timedOut)
+                        levels: levels, brightness: brightness, unreachable: unreachable, timedOut: timedOut)
     }
 
     private func apply(_ s: Snapshot) {
@@ -293,5 +324,6 @@ final class MonitorModel: ObservableObject {
         support = s.support
         dimming = s.dimming
         dimmingLevels = s.levels
+        brightness = s.brightness
     }
 }

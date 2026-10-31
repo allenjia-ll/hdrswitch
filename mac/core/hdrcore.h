@@ -6,7 +6,8 @@
 //
 // HDR switching uses SkyLight (private framework, macOS 11+), loaded at runtime.
 // Color profiles use the public ColorSync API (same as System Settings > Displays > Color profile).
-// Local dimming is set on the monitor over DDC/CI via IOAVService (private IOKit API, Apple Silicon).
+// Local dimming and brightness are set on the monitor over DDC/CI via IOAVService (private IOKit API,
+// Apple Silicon).
 
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
@@ -107,6 +108,10 @@ NSString *HCLevelName(NSDictionary<NSString *, NSNumber *> *levels, uint16_t val
 // Writes local dimming, reads it back and retries while the monitor is busy. Skips the write if
 // it's already set. Returns NO (with a warning logged) if it couldn't be confirmed.
 BOOL HCSetDimming(IOAVServiceRef av, uint8_t code, uint16_t value, NSString *label);
+// Brightness (VCP 0x10, the same on all monitors), as 0-100 % of the monitor's range. Only write it
+// to a monitor found in the DB. Set works like HCSetDimming.
+BOOL HCGetBrightness(IOAVServiceRef av, int *percent);
+BOOL HCSetBrightness(IOAVServiceRef av, int percent);
 
 // ---------------------------------------------------------------- settings --
 // settings.json holds what the menu bar app's HDR switch sets, for each monitor by display UUID:

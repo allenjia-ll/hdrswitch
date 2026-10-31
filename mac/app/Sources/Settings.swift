@@ -14,16 +14,23 @@ struct SettingRule: Equatable {
 // ("off", "standard").
 enum Preferences {
     enum Rule: CaseIterable {
-        case onProfile, offProfile, onDimming, offDimming
+        case onProfile, offProfile, onDimming, offDimming, onBrightness, offBrightness
 
-        fileprivate var state: String { self == .onProfile || self == .onDimming ? "hdr_on" : "hdr_off" }
-        fileprivate var what: String { self == .onProfile || self == .offProfile ? "color_profile" : "local_dimming" }
+        fileprivate var state: String { [.onProfile, .onDimming, .onBrightness].contains(self) ? "hdr_on" : "hdr_off" }
+        fileprivate var what: String {
+            switch self {
+            case .onProfile, .offProfile: return "color_profile"
+            case .onDimming, .offDimming: return "local_dimming"
+            case .onBrightness, .offBrightness: return "brightness"
+            }
+        }
         fileprivate var fallback: SettingRule {
             switch self {
             case .onProfile: return SettingRule(enabled: true, value: "Rec. ITU-R BT.2020-1")
             case .offProfile: return SettingRule(enabled: true, value: "Display P3")
             case .onDimming: return SettingRule(enabled: true, value: "standard")
             case .offDimming: return SettingRule(enabled: true, value: "off")
+            case .onBrightness, .offBrightness: return SettingRule(enabled: false, value: "50")   // % ; left alone by default
             }
         }
         // The keys these settings had in the app's preferences up to 0.2.1.
@@ -40,7 +47,7 @@ enum Preferences {
         let monitor = HCLoadSettings(&err)?[uuid] as? [String: Any]
         let saved = (monitor?[rule.state] as? [String: Any])?[rule.what] as? [String: Any]
         return SettingRule(enabled: saved?["set"] as? Bool ?? rule.fallback.enabled,
-                           value: saved?["value"] as? String ?? rule.fallback.value)
+                           value: saved?["value"] as? String ?? (saved?["value"] as? NSNumber)?.stringValue ?? rule.fallback.value)
     }
 
     static func set(_ rule: Rule, uuid: String, _ value: SettingRule) {
@@ -54,7 +61,8 @@ enum Preferences {
     private static func save(_ rules: [Rule: SettingRule], uuid: String) -> Bool {
         var monitor: [String: [String: Any]] = [:]
         for (rule, value) in rules {
-            monitor[rule.state, default: [:]][rule.what] = ["set": value.enabled, "value": value.value]
+            let number = rule == .onBrightness || rule == .offBrightness ? Int(value.value) : nil   // a number in the file
+            monitor[rule.state, default: [:]][rule.what] = ["set": value.enabled, "value": number.map { $0 as Any } ?? value.value]
         }
         var err: NSString?
         if HCSaveMonitorSettings(uuid, monitor, &err) { return true }
@@ -69,13 +77,14 @@ enum Preferences {
         let d = UserDefaults.standard
         guard !connected.isEmpty, let path = HCSettingsPath(), !FileManager.default.fileExists(atPath: path),
               let id = Bundle.main.bundleIdentifier, let old = d.persistentDomain(forName: id) else { return }
-        let names = Rule.allCases.flatMap { [$0.oldKeys.enabled, $0.oldKeys.value] }
+        let moved: [Rule] = [.onProfile, .offProfile, .onDimming, .offDimming]   // brightness came later
+        let names = moved.flatMap { [$0.oldKeys.enabled, $0.oldKeys.value] }
         let ours = old.keys.filter { key in names.contains { key == $0 || key.hasSuffix("." + $0) } }
         guard !ours.isEmpty else { return }
         let named = ours.filter { $0.contains(".") }.compactMap { $0.split(separator: ".").first.map(String.init) }
         for uuid in Set(connected + named) {
             var rules: [Rule: SettingRule] = [:]
-            for rule in Rule.allCases {
+            for rule in moved {
                 let keys = rule.oldKeys
                 rules[rule] = SettingRule(enabled: d.object(forKey: uuid + "." + keys.enabled) as? Bool ?? d.object(forKey: keys.enabled) as? Bool ?? rule.fallback.enabled,
                                           value: d.string(forKey: uuid + "." + keys.value) ?? d.string(forKey: keys.value) ?? rule.fallback.value)
@@ -89,6 +98,7 @@ enum Preferences {
 
     static func profile(hdrOn: Bool, uuid: String) -> SettingRule { get(hdrOn ? .onProfile : .offProfile, uuid: uuid) }
     static func dimming(hdrOn: Bool, uuid: String) -> SettingRule { get(hdrOn ? .onDimming : .offDimming, uuid: uuid) }
+    static func brightness(hdrOn: Bool, uuid: String) -> SettingRule { get(hdrOn ? .onBrightness : .offBrightness, uuid: uuid) }
 }
 
 // The settings window's state. Each change is saved right away, as in macOS's own Settings windows;
@@ -103,6 +113,8 @@ final class SettingsModel: ObservableObject {
     @Published var offProfile = SettingRule(enabled: false, value: "") { didSet { save(.offProfile, offProfile) } }
     @Published var onDimming = SettingRule(enabled: false, value: "") { didSet { save(.onDimming, onDimming) } }
     @Published var offDimming = SettingRule(enabled: false, value: "") { didSet { save(.offDimming, offDimming) } }
+    @Published var onBrightness = SettingRule(enabled: false, value: "") { didSet { save(.onBrightness, onBrightness) } }
+    @Published var offBrightness = SettingRule(enabled: false, value: "") { didSet { save(.offBrightness, offBrightness) } }
     private var loading = false   // showing the saved values, without writing them back
     @Published private(set) var monitors: [Monitor] = []   // the connected external displays
     @Published private(set) var selected = ""               // the UUID of the monitor shown
@@ -133,6 +145,8 @@ final class SettingsModel: ObservableObject {
         offProfile = Preferences.get(.offProfile, uuid: uuid)
         onDimming = Preferences.get(.onDimming, uuid: uuid)
         offDimming = Preferences.get(.offDimming, uuid: uuid)
+        onBrightness = Preferences.get(.onBrightness, uuid: uuid)
+        offBrightness = Preferences.get(.offBrightness, uuid: uuid)
         loading = false
         reloadLevels()
     }
@@ -256,8 +270,10 @@ struct SettingsView: View {
                     Text(model.selectedTitle)
                         .font(.system(size: 13, weight: .bold))
                 }
-                Section(title: "When HDR is turned on", profile: $model.onProfile, dimming: $model.onDimming, model: model)
-                Section(title: "When HDR is turned off", profile: $model.offProfile, dimming: $model.offDimming, model: model)
+                Section(title: "When HDR is turned on", profile: $model.onProfile, dimming: $model.onDimming,
+                        brightness: $model.onBrightness, model: model)
+                Section(title: "When HDR is turned off", profile: $model.offProfile, dimming: $model.offDimming,
+                        brightness: $model.offBrightness, model: model)
                 if model.levels.isEmpty {
                     Text("Local dimming isn't available: this monitor isn't supported, or it didn't answer. To add it, use Detect Monitor below.")
                         .font(.system(size: 11))
@@ -302,6 +318,7 @@ struct SettingsView: View {
         let title: String
         @Binding var profile: SettingRule
         @Binding var dimming: SettingRule
+        @Binding var brightness: SettingRule
         @ObservedObject var model: SettingsModel
 
         var body: some View {
@@ -313,8 +330,37 @@ struct SettingsView: View {
                     Divider().padding(.vertical, 6)
                     RuleRow(label: "Set local dimming to", rule: $dimming, options: model.levels, title: { $0.capitalized })
                         .disabled(model.levels.isEmpty)
+                    Divider().padding(.vertical, 6)
+                    BrightnessRow(rule: $brightness)
+                        .disabled(model.levels.isEmpty)   // like local dimming, only for a supported monitor
                 }
             }
+        }
+    }
+}
+
+// "[✓] Set brightness to    ──●── 50%": a percentage, dimmed while unchecked.
+struct BrightnessRow: View {
+    @Binding var rule: SettingRule
+
+    var body: some View {
+        let percent = Double(rule.value) ?? 50
+        HStack(spacing: 8) {
+            Toggle("Set brightness to", isOn: $rule.enabled)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 13))
+            Spacer()
+            Group {
+                Slider(value: Binding(get: { percent }, set: { rule.value = String(Int($0.rounded())) }), in: 0...100)
+                    .controlSize(.small)
+                    .frame(width: 120)
+                Text("\(Int(percent))%")
+                    .font(.system(size: 13))
+                    .monospacedDigit()
+                    .frame(width: 42, alignment: .trailing)
+            }
+            .disabled(!rule.enabled)
+            .opacity(rule.enabled ? 1 : 0.45)
         }
     }
 }

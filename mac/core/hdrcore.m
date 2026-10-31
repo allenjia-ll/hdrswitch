@@ -4,6 +4,7 @@
 #include <CommonCrypto/CommonDigest.h>
 #include <dlfcn.h>
 #include <limits.h>
+#include <math.h>
 #include <mach-o/dyld.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -641,18 +642,45 @@ NSString *HCLevelName(NSDictionary<NSString *, NSNumber *> *levels, uint16_t val
     return nil;
 }
 
-BOOL HCSetDimming(IOAVServiceRef av, uint8_t code, uint16_t value, NSString *label) {
+// Writes a setting, reads it back and retries while the monitor is busy. what: for messages.
+static BOOL writeConfirmed(IOAVServiceRef av, uint8_t code, uint16_t value, NSString *what, NSString *label) {
     uint16_t cur = 0xFFFF;
     // Skip the write (and the monitor's settings-memory wear) if it's already set; reads don't wear it.
-    if (HCDDCGet(av, code, &cur, NULL) && cur == value) { logInfo(@"Local dimming already %@", label); return YES; }
+    if (HCDDCGet(av, code, &cur, NULL) && cur == value) { logInfo(@"%@ already %@", what, label); return YES; }
     // The monitor silently drops writes while busy (e.g. right after an HDR switch): write, verify, repeat.
     for (int i = 0; i < 10; i++) {
         ddcSet(av, code, value);
         sleep(1);
-        if (HCDDCGet(av, code, &cur, NULL) && cur == value) { logInfo(@"Local dimming: %@", label); return YES; }
+        if (HCDDCGet(av, code, &cur, NULL) && cur == value) { logInfo(@"%@: %@", what, label); return YES; }
     }
-    logWarn(@"couldn't confirm local dimming is %@ (DDC busy? quit MonitorControl and retry)", label);
+    logWarn(@"couldn't confirm %@ is %@ (DDC busy? quit MonitorControl and retry)", what.lowercaseString, label);
     return NO;
+}
+
+BOOL HCSetDimming(IOAVServiceRef av, uint8_t code, uint16_t value, NSString *label) {
+    return writeConfirmed(av, code, value, @"Local dimming", label);
+}
+
+static const uint8_t kBrightnessCode = 0x10;
+
+BOOL HCGetBrightness(IOAVServiceRef av, int *percent) {
+    uint16_t cur = 0, max = 0;
+    if (!HCDDCGet(av, kBrightnessCode, &cur, &max) || max == 0 || cur > max) return NO;
+    *percent = (int)lround(cur * 100.0 / max);
+    return YES;
+}
+
+BOOL HCSetBrightness(IOAVServiceRef av, int percent) {
+    uint16_t cur = 0, max = 0;
+    BOOL ok = NO;
+    if (percent < 0 || percent > 100) return NO;
+    for (int t = 0; t < 10 && !ok && !HCDDCDidTimeOut(); t++) {   // the monitor is busy right after an HDR switch
+        if (t) usleep(300000);
+        ok = HCDDCGet(av, kBrightnessCode, &cur, &max);
+    }
+    if (!ok || max == 0) return NO;
+    return writeConfirmed(av, kBrightnessCode, (uint16_t)lround(percent * max / 100.0), @"Brightness",
+                          [NSString stringWithFormat:@"%d%%", percent]);
 }
 
 // ---------------------------------------------------------------- settings --

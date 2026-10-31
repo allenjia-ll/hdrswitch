@@ -100,6 +100,10 @@ struct MonitorSection: View {
                             .padding(.trailing, 26)   // ends where a dropdown's text would (before its arrows: 6 + 18 + 2)
                     }
                 }
+                if model.support == .supported {
+                    Divider().padding(.vertical, 6)
+                    SettingRow(label: "Brightness") { BrightnessSlider(model: model) }
+                }
             }
             if let warning = model.warning {
                 HStack(alignment: .top, spacing: 6) {
@@ -152,6 +156,31 @@ struct HDRSwitch: View {
             .toggleStyle(.switch)
             .controlSize(.mini)   // 36 x 16 pt, the size System Settings uses
             .disabled(!model.canChange)
+    }
+}
+
+// The monitor's brightness: follows the mouse while dragged, and is written when let go.
+struct BrightnessSlider: View {
+    @ObservedObject var model: MonitorModel
+
+    var body: some View {
+        let shown = model.brightnessDraft ?? model.brightness.map(Double.init)
+        if let shown = shown {
+            HStack(spacing: 6) {
+                Slider(value: Binding(get: { shown }, set: { model.brightnessDraft = $0 }), in: 0...100,
+                       onEditingChanged: { editing in if !editing { model.commitBrightness() } })
+                    .controlSize(.small)
+                Text("\(Int(shown.rounded()))%")
+                    .font(.system(size: 13))
+                    .monospacedDigit()
+                    .frame(width: 42, alignment: .trailing)
+            }
+            .disabled(!model.canChange)
+        } else {
+            Text("Unknown")
+                .font(.system(size: 13))
+                .padding(.trailing, 26)
+        }
     }
 }
 

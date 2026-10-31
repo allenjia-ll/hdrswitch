@@ -24,6 +24,11 @@ cp Info.plist "$APP/Contents/Info.plist"
 cp Resources/* "$APP/Contents/Resources/"
 cp ../pkg/uninstall.sh "$APP/Contents/Resources/"
 cp ../../monitor_db.json "$APP/Contents/Resources/"   # local_monitor_db.json is in ~/Library/Application Support/HDR Switch
+
+# The version About shows: the newest release in CHANGELOG.md, unless a release script sets another.
+VERSION="${HDRSWITCH_VERSION:-$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' ../../CHANGELOG.md | head -1)}"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+
 codesign --force --sign - "$APP"   # ad-hoc, required to run on Apple Silicon
 
 echo "Built $(pwd)/$APP"

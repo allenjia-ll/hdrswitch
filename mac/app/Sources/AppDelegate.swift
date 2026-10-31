@@ -110,13 +110,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // macOS's standard About panel: the name, icon, version and copyright come from Info.plist.
     private func openAbout() {
         closePopup()
-        let credits = NSMutableAttributedString(
-            string: "An unofficial tool, not affiliated with or endorsed by any monitor's manufacturer or Apple. MIT License.\n\n",
-            attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
+        let center = NSMutableParagraphStyle()
+        center.alignment = .center
+        let text = "Switches HDR on your external monitors in one click, along with the color profile, local dimming "
+            + "and brightness you choose in Settings.\n\n"
+            + "An unofficial tool, not affiliated with or endorsed by Apple or any monitor's manufacturer. It changes "
+            + "monitor settings using private macOS APIs and DDC/CI. Use it at your own risk.\n\n"
+        let credits = NSMutableAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: center])
         let link = "https://github.com/allenjia-ll/hdrswitch"
-        credits.append(NSAttributedString(string: link, attributes: [.font: NSFont.systemFont(ofSize: 11), .link: link]))
+        credits.append(NSAttributedString(string: link, attributes: [.font: NSFont.systemFont(ofSize: 11), .link: link,
+                                                                     .paragraphStyle: center]))
         NSApp.activate(ignoringOtherApps: true)   // a menu bar app isn't active by default
-        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        // No build number: it would show in brackets after the version.
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits, .version: ""])
     }
 
     // Detect Monitor, from Settings, for the monitor Settings shows. A new run each time, unless one is open.

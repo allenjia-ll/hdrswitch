@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Menu bar app: **About HDR Switch** in the panel, under Settings, opens the standard About window with the version, copyright, and a link to the project.
+- Menu bar app: **About HDR Switch** in the panel, under Settings, opens the standard About window with what the app does, a short disclaimer, the version, copyright, and a link to the project.
 
 ### Changed
 
@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Menu bar app: About shows the release version in every build: `mac/app/build.sh` takes it from the newest release in `CHANGELOG.md`, and release builds set the version they're given.
 - Menu bar app: the **Also delete my settings and detected monitors** checkbox didn't appear when uninstalling. Uninstall now asks in a window of its own.
 - Uninstalling, and installing the PKG, only quit the app in `/Applications`, not a copy running from a build folder.
 - Menu bar app: after uninstalling from Settings, the app always quits, instead of relying on the script to stop it.

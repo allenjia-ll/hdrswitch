@@ -17,11 +17,7 @@ STAGE="$DIST/$NAME-dmg"
 
 grep -q "^## \[$VERSION\]" "$ROOT/CHANGELOG.md" || { echo "CHANGELOG.md has no [$VERSION] section" >&2; exit 1; }
 
-./build.sh
-
-# The version Finder shows. Changing Info.plist breaks the signature, so sign again.
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
-codesign --force --sign - "$APP"
+HDRSWITCH_VERSION="$VERSION" ./build.sh
 
 # The release must run on macOS 12+ on Apple Silicon, signed, with the shipped monitor database.
 BIN="$APP/Contents/MacOS/HDRSwitch"

@@ -21,7 +21,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 Allen Jia</string>
+	<string>Copyright © 2026 Allen Jia. MIT License.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

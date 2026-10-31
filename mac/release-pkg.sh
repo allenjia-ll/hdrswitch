@@ -18,11 +18,8 @@ WORK="$DIST/$NAME-pkg"
 grep -q "^## \[$VERSION\]" "$ROOT/CHANGELOG.md" || { echo "CHANGELOG.md has no [$VERSION] section" >&2; exit 1; }
 
 ./build.sh
-app/build.sh
+HDRSWITCH_VERSION="$VERSION" app/build.sh
 APP="app/build/HDR Switch.app"
-# The version Finder shows. Changing Info.plist breaks the signature, so sign again.
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
-codesign --force --sign - "$APP"
 
 rm -rf "$WORK" "$DIST/$NAME.pkg"
 mkdir -p "$WORK/app" "$WORK/cli/.local/lib/hdrswitch" "$WORK/cli/.local/bin" "$WORK/resources"

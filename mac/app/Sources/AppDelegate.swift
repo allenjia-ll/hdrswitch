@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 self?.panel.refit()
                 self?.settings.reloadLevels()   // Settings shows the levels read from the monitor
+                self?.tellAboutUnsupportedMonitors()
             }
         }
         // The same for the settings window, e.g. when another monitor's settings show a note.
@@ -47,6 +48,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Clicking another app's window activates that app; close the popup then.
         NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification,
                                                object: nil, queue: .main) { [weak self] _ in self?.closePopup() }
+        displays.refresh()   // finds out now whether a monitor is unsupported, without waiting for a click
+    }
+
+    // The first time a monitor turns out not to be in the database, says so and where to add it.
+    private func tellAboutUnsupportedMonitors() {
+        let key = "unsupportedMonitorsToldAbout"
+        var told = UserDefaults.standard.stringArray(forKey: key) ?? []
+        guard let monitor = displays.monitors.first(where: { $0.support == .unsupported && !told.contains($0.uuid) }) else { return }
+        told.append(monitor.uuid)
+        UserDefaults.standard.set(told, forKey: key)
+        let alert = NSAlert()
+        alert.messageText = "\(monitor.name) isn't in HDR Switch's database"
+        alert.informativeText = "HDR and the color profile work, but local dimming and brightness don't. To add this monitor, "
+            + "open Settings and choose Detect Monitor."
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Later")
+        alert.window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)   // above the popup
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn { openSettings(for: monitor.uuid) }
     }
 
     @objc private func togglePopup(_ sender: Any?) {
@@ -69,9 +89,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let m = outsideClickMonitor { NSEvent.removeMonitor(m); outsideClickMonitor = nil }
     }
 
-    private func openSettings() {
+    private func openSettings(for uuid: String? = nil) {
         closePopup()
         settings.reload()   // the saved settings (changes in the window are saved as they're made)
+        if let uuid = uuid { settings.select(uuid) }
         // A new window each time (unless it's open), sized to the current content.
         if settingsWindow?.isVisible != true {
             settingsWindow = makeSettingsWindow(model: settings,

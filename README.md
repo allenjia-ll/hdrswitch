@@ -54,6 +54,7 @@ macOS:
 - `mac/build.sh`: builds `mac/hdrctl`
 - `mac/release.sh`: builds and packages the CLI release zip
 - `mac/app/release.sh`: builds and packages the menu bar app as a DMG
+- `mac/release-pkg.sh`: builds the installer for the app and, optionally, the CLI; its files are in `mac/pkg/`
 - `mac/m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
 
 Windows:
@@ -111,6 +112,12 @@ or clear the mark-of-the-web first, in the unzipped folder:
 ```powershell
 Get-ChildItem -Recurse | Unblock-File
 ```
+
+### Install with the installer (macOS)
+
+`mac/release-pkg.sh <version>` builds `dist/hdrswitch-<version>-macos-arm64.pkg`. Opening it installs `HDR Switch.app` in `/Applications`; on the setup screen, **Command line tool** also installs `hdrctl` in `/usr/local/bin` (a link to `/usr/local/lib/hdrswitch`, which also holds its `monitor_db.json`; it replaces an existing link of that name). It asks for your password, and opens the app when it finishes. If your monitor isn't in the database, the app says so once and offers to open Settings, where **Detect Monitor…** adds it.
+
+The package isn't signed, so macOS blocks it the first time: choose **Open Anyway** in System Settings > Privacy & Security. To uninstall, quit the app and delete `/Applications/HDR Switch.app`, and, for the tool, `/usr/local/bin/hdrctl` and `/usr/local/lib/hdrswitch` (with `sudo`). Your settings are in `~/Library/Application Support/HDR Switch/`.
 
 ### Set up your monitor (macOS)
 

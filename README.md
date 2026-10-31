@@ -248,8 +248,8 @@ Or call `hdrctl` directly:
 ```
 hdrctl list                      list displays, HDR state and current profile
 hdrctl status                    HDR state + profile + local dimming of the target display
-hdrctl on                        HDR on  + HDR profile + local dimming Standard
-hdrctl off                       HDR off + SDR profile + local dimming Off
+hdrctl on                        HDR on  + color profile and local dimming for HDR on
+hdrctl off                       HDR off + color profile and local dimming for HDR off
 hdrctl toggle                    flip between on/off
 hdrctl hdr on|off                HDR only
 hdrctl profile <name|path>       color profile only
@@ -261,9 +261,16 @@ hdrctl detect                    find the monitor's local dimming code and level
 
 Options:
   --display <text>       part of the display name, or its UUID  (default: the only external display)
-  --hdr-profile <spec>   profile used by "on"            (default: "Rec. ITU-R BT.2020-1")
-  --sdr-profile <spec>   profile used by "off"           (default: "Display P3")
+  --hdr-profile <spec>   profile used by "on"
+  --sdr-profile <spec>   profile used by "off"
 ```
+
+`on`, `off` and `toggle` take each value from the first place that has it:
+
+- **Color profile:** `--hdr-profile` / `--sdr-profile`, then `settings.json`, then the default (BT.2020, Display P3).
+- **Local dimming:** `settings.json`, then `hdr_on` / `hdr_off` in the monitor's database entry, then the default (Standard, Off).
+
+`settings.json` is what the menu bar app saves, for each monitor by display UUID; `"set": false` there leaves that setting alone. If a profile isn't installed, or a level isn't one of the monitor's, `hdrctl` says so and stops before changing anything. An invalid `settings.json` stops it too.
 
 A profile `<spec>` is either a path to an `.icc`/`.icm` file or (part of) the profile's name as shown in System Settings > Displays > Color profile. Profiles are searched in `~/Library`, `/Library` and `/System/Library` `ColorSync/Profiles`.
 

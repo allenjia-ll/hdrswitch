@@ -4,8 +4,8 @@
 //
 //   hdrctl list                      list displays, HDR state and current profile
 //   hdrctl status                    HDR state + profile + local dimming of the target display
-//   hdrctl on                        HDR on  + HDR profile  (default: "Rec. ITU-R BT.2020-1") + local dimming Standard
-//   hdrctl off                       HDR off + SDR profile  (default: "Display P3") + local dimming Off
+//   hdrctl on                        HDR on  + the color profile and local dimming for HDR on
+//   hdrctl off                       HDR off + the color profile and local dimming for HDR off
 //   hdrctl toggle                    flip between on/off
 //   hdrctl hdr on|off                HDR only
 //   hdrctl profile <name|path>       color profile only
@@ -16,8 +16,13 @@
 //
 // Options:
 //   --display <text>       part of the display name, or its UUID (default: the only external display)
-//   --hdr-profile <spec>   profile description or .icc path used by "on"  (default: "Rec. ITU-R BT.2020-1")
-//   --sdr-profile <spec>   profile description or .icc path used by "off" (default: "Display P3")
+//   --hdr-profile <spec>   profile description or .icc path used by "on"
+//   --sdr-profile <spec>   profile description or .icc path used by "off"
+//
+// on, off and toggle take the color profile from these options, then settings.json (saved by the menu
+// bar app for each display), then the defaults: "Rec. ITU-R BT.2020-1" and "Display P3". Local dimming
+// comes from settings.json, then the monitor's database entry, then Standard and Off. In settings.json,
+// "set": false leaves that setting alone. An unknown profile or level stops before anything changes.
 //
 // The HDR, profile, DDC and monitor DB code is in core/hdrcore.m, shared with the menu bar app.
 // This file is the command line: argument parsing, output and exit codes.
@@ -53,8 +58,8 @@ static void usage(int code) {
         "commands:\n"
         "  list                  list displays (with their UUIDs), HDR state and current profile\n"
         "  status                HDR state, profile and local dimming of the target display\n"
-        "  on                    HDR on  + HDR profile (default: Rec. ITU-R BT.2020-1) + local dimming Standard\n"
-        "  off                   HDR off + SDR profile (default: Display P3) + local dimming Off\n"
+        "  on                    HDR on  + color profile and local dimming for HDR on\n"
+        "  off                   HDR off + color profile and local dimming for HDR off\n"
         "  toggle                flip between on and off\n"
         "  hdr on|off            change HDR only\n"
         "  profile <name|path>   change color profile only\n"
@@ -67,6 +72,10 @@ static void usage(int code) {
         "\n"
         "--display picks the display by (part of) its name or its UUID; without it, the\n"
         "only external display is used.\n"
+        "on, off and toggle use the color profile from --hdr-profile / --sdr-profile, then\n"
+        "settings.json, then the default (Rec. ITU-R BT.2020-1, Display P3), and local dimming\n"
+        "from settings.json, then the monitor's database entry, then Standard and Off.\n"
+        "An unknown profile or level stops before anything changes.\n"
         "A profile <spec> is either a path to an .icc/.icm file or (part of) the\n"
         "profile's name as shown in System Settings > Displays > Color profile.\n");
     exit(code);
@@ -106,17 +115,61 @@ static uint8_t localDimming(NSDictionary *entry, NSDictionary<NSString *, NSNumb
     return (uint8_t)code;
 }
 
-// The level hdrctl on (or off) uses: settings.local_dimming.hdr_on / hdr_off if the entry has it
-// (entries from hdrctl detect do), otherwise "standard" / "off".
-static NSString *hdrLevel(NSDictionary *entry, BOOL on) {
-    NSString *name = entry[@"settings"][@"local_dimming"][on ? @"hdr_on" : @"hdr_off"];
-    return [name isKindOfClass:NSString.class] ? name.lowercaseString : on ? @"standard" : @"off";
+// One setting of this display in settings.json, e.g. hdr_on.color_profile, or nil if it has none.
+static NSDictionary *savedSetting(NSString *uuid, BOOL on, NSString *what) {
+    NSString *err = nil;
+    NSDictionary *all = HCLoadSettings(&err);
+    if (!all) die(@"%@ — not changing anything", err);
+    NSDictionary *monitor = uuid ? all[uuid] : nil;
+    NSDictionary *state = [monitor isKindOfClass:NSDictionary.class] ? monitor[on ? @"hdr_on" : @"hdr_off"] : nil;
+    NSDictionary *saved = [state isKindOfClass:NSDictionary.class] ? state[what] : nil;
+    return [saved isKindOfClass:NSDictionary.class] ? saved : nil;
 }
 
-static uint16_t levelValue(NSDictionary<NSString *, NSNumber *> *levels, NSString *name) {
-    NSNumber *v = levels[name];
-    if (!v) die(@"monitor_db.json has no local dimming level \"%@\" for this monitor", name);
-    return v.unsignedShortValue;
+// The profile for on or off: --hdr-profile / --sdr-profile, then settings.json, then the default. nil
+// if settings.json says to leave it alone. Exits if the system doesn't have it.
+static NSURL *chooseProfile(NSString *flag, NSDictionary *saved, BOOL on) {
+    if (!flag && [saved[@"set"] isEqual:@NO]) return nil;
+    NSString *fallback = on ? @"Rec. ITU-R BT.2020-1" : @"Display P3";
+    NSString *spec = flag ?: saved[@"value"] ?: fallback;
+    NSString *source = flag ? (on ? @"--hdr-profile" : @"--sdr-profile") : saved[@"value"] ? @"settings.json" : @"the default";
+    if (![spec isKindOfClass:NSString.class]) die(@"color profile in settings.json isn't text — not changing anything");
+    NSString *err = nil;
+    NSURL *url = HCResolveProfile(spec, &err);
+    if (!url) die(@"%@ (from %@) — not changing anything", err, source);
+    return url;
+}
+
+// The local dimming level for on or off: settings.json, then the monitor's hdr_on / hdr_off in the
+// database, then "standard" / "off". nil if settings.json says to leave it alone. Exits if it isn't
+// one of the monitor's levels.
+static NSString *chooseLevel(NSDictionary *saved, NSDictionary *entry, NSDictionary<NSString *, NSNumber *> *levels, BOOL on) {
+    if ([saved[@"set"] isEqual:@NO]) return nil;
+    NSString *fromDB = entry[@"settings"][@"local_dimming"][on ? @"hdr_on" : @"hdr_off"];
+    NSString *name = saved[@"value"] ?: fromDB ?: (on ? @"standard" : @"off");
+    NSString *source = saved[@"value"] ? @"settings.json" : fromDB ? @"monitor_db.json" : @"the default";
+    if (![name isKindOfClass:NSString.class] || !levels[name.lowercaseString]) {
+        NSArray *valid = [levels keysSortedByValueUsingSelector:@selector(compare:)];
+        die(@"\"%@\" (from %@) isn't a local dimming level of this monitor; its levels are: %@ — not changing anything",
+            name, source, [valid componentsJoinedByString:@", "]);
+    }
+    return name.lowercaseString;
+}
+
+// hdrctl on / off: everything is checked first, so a problem changes nothing.
+static void switchHDR(BOOL on, CGDirectDisplayID d, NSString *name, NSString *flag) {
+    NSString *err = nil, *uuid = HCDisplayUUID(d);
+    NSURL *profile = chooseProfile(flag, savedSetting(uuid, on, @"color_profile"), on);
+    NSDictionary *attrs = nil;
+    IOAVServiceRef av = findAVService(d, &attrs);
+    NSDictionary<NSString *, NSNumber *> *levels = nil;
+    NSDictionary *entry = requireMonitor(av, attrs);
+    uint8_t code = localDimming(entry, &levels);
+    NSString *levelName = chooseLevel(savedSetting(uuid, on, @"local_dimming"), entry, levels, on);
+    if (!HCSetHDR(d, on, &err)) die(@"%@", err);
+    if (profile && !HCSetProfile(d, profile, &err)) die(@"%@", err);
+    if (levelName) HCSetDimming(av, code, levels[levelName].unsignedShortValue, levelName);
+    say(@"Done: %@ — HDR %@", name, on ? @"on" : @"off");
 }
 
 static void printStatus(CGDirectDisplayID d, NSString *name) {
@@ -289,8 +342,7 @@ static int detect(CGDirectDisplayID d) {
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         NSString *needle = nil;   // the only external display
-        NSString *hdrSpec = @"Rec. ITU-R BT.2020-1";
-        NSString *sdrSpec = @"Display P3";
+        NSString *hdrSpec = nil, *sdrSpec = nil;   // override settings.json
         NSMutableArray<NSString *> *args = [NSMutableArray array];
 
         for (int i = 1; i < argc; i++) {
@@ -395,31 +447,9 @@ int main(int argc, const char *argv[]) {
                                                 ?: [NSString stringWithFormat:@"unknown (VCP 0x%02X = %u)", code, cur]);
         } else if ([cmd isEqualToString:@"on"] ||
                    ([cmd isEqualToString:@"toggle"] && !HCIsHDR(d))) {
-            NSURL *p = resolveProfile(hdrSpec);          // resolve and verify first, so we fail before switching
-            NSDictionary *attrs = nil;
-            IOAVServiceRef av = findAVService(d, &attrs);
-            NSDictionary<NSString *, NSNumber *> *levels = nil;
-            NSDictionary *entry = requireMonitor(av, attrs);
-            uint8_t code = localDimming(entry, &levels);
-            NSString *levelName = hdrLevel(entry, YES);
-            uint16_t level = levelValue(levels, levelName);
-            if (!HCSetHDR(d, YES, &err)) die(@"%@", err);
-            if (!HCSetProfile(d, p, &err)) die(@"%@", err);
-            HCSetDimming(av, code, level, levelName);
-            say(@"Done: %@ — HDR on", name);
+            switchHDR(YES, d, name, hdrSpec);
         } else if ([cmd isEqualToString:@"off"] || [cmd isEqualToString:@"toggle"]) {
-            NSURL *p = resolveProfile(sdrSpec);
-            NSDictionary *attrs = nil;
-            IOAVServiceRef av = findAVService(d, &attrs);
-            NSDictionary<NSString *, NSNumber *> *levels = nil;
-            NSDictionary *entry = requireMonitor(av, attrs);
-            uint8_t code = localDimming(entry, &levels);
-            NSString *levelName = hdrLevel(entry, NO);
-            uint16_t level = levelValue(levels, levelName);
-            if (!HCSetHDR(d, NO, &err)) die(@"%@", err);
-            if (!HCSetProfile(d, p, &err)) die(@"%@", err);
-            HCSetDimming(av, code, level, levelName);
-            say(@"Done: %@ — HDR off", name);
+            switchHDR(NO, d, name, sdrSpec);
         } else if ([cmd isEqualToString:@"hdr"] && args.count == 2) {
             NSString *v = args[1].lowercaseString;
             if (![v isEqualToString:@"on"] && ![v isEqualToString:@"off"]) usage(1);

@@ -10,15 +10,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: TranslucentWindow?
     private var detectionWindow: NSWindow?
     private var detectedWindow: NSWindow?
-    private let settings = SettingsModel()
     private var outsideClickMonitor: Any?
     private var modelChanges: AnyCancellable?
     private var settingsChanges: AnyCancellable?
     private let displays = DisplayList()
+    private lazy var settings = SettingsModel(displays: displays)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // monitor_db.json ships in the app. my_monitor.json and local_monitor_db.json are in the core's
-        // data folder, ~/Library/Application Support/HDR Switch, shared with hdrctl.
+        // monitor_db.json ships in the app. local_monitor_db.json is in the core's data folder,
+        // ~/Library/Application Support/HDR Switch, shared with hdrctl.
         HCSetDBPath(Bundle.main.path(forResource: "monitor_db", ofType: "json"))
         HCSetLogger { _, message in NSLog("HDR Switch: %@", message ?? "") }
 
@@ -35,7 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The popup's height changes with its contents (e.g. a warning, or another monitor), so refit it
         // after each change.
         modelChanges = displays.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.panel.refit() }
+            DispatchQueue.main.async {
+                self?.panel.refit()
+                self?.settings.reloadLevels()   // Settings shows the levels read from the monitor
+            }
         }
         // The same for the settings window, e.g. when another monitor's settings show a note.
         settingsChanges = settings.objectWillChange.sink { [weak self] _ in
@@ -97,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // Delete Detected Monitor, from Settings: moves local_monitor_db.json to the Trash after asking, so
-    // the shipped monitor_db.json applies again. my_monitor.json isn't touched.
+    // the shipped monitor_db.json applies again.
     private func clearDetected() {
         guard let path = HCLocalDBPath(), FileManager.default.fileExists(atPath: path) else {
             detectedMonitorsChanged()
@@ -126,9 +129,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         detectedMonitorsChanged()
     }
 
-    // local_monitor_db.json was saved or cleared: Settings' levels and buttons change (its window
-    // refits to them).
+    // local_monitor_db.json was saved or cleared: read the monitors again, since their levels may
+    // have changed, which updates Settings (its window refits to them).
     private func detectedMonitorsChanged() {
+        displays.refresh()
         settings.reloadLevels()
     }
 

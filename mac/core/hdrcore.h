@@ -17,7 +17,7 @@ typedef NS_ENUM(NSInteger, HCLogLevel) { HCLogInfo, HCLogWarning };
 void HCSetLogger(void (^logger)(HCLogLevel level, NSString *message));
 
 // -------------------------------------------------------------- data files --
-// my_monitor.json and local_monitor_db.json live in the data folder, shared by the CLI and the app:
+// local_monitor_db.json lives in the data folder, shared by the CLI and the app:
 // ~/Library/Application Support/HDR Switch (created if needed), unless set here (tests).
 void HCSetDataDirectory(NSString *dir);
 NSString *HCDataDirectory(void);
@@ -25,8 +25,8 @@ NSString *HCDataDirectory(void);
 // from here unless HCSetDBPath says otherwise (the app ships it in its Resources).
 NSString *HCToolDirectory(void);
 void HCSetDBPath(NSString *path);
-// Before 0.2.1 the CLI kept my_monitor.json and local_monitor_db.json next to hdrctl. Moves them to
-// the data folder if it doesn't have them yet, and returns a line for each move.
+// Before 0.2.1 the CLI kept local_monitor_db.json next to hdrctl. Moves it to the data folder if it
+// doesn't have one yet, and returns a line for the move.
 NSArray<NSString *> *HCMigrateToolDirectoryFiles(void);
 // Old files next to hdrctl that are ignored because the data folder already has its own.
 NSArray<NSString *> *HCToolDirectoryLeftovers(void);
@@ -81,12 +81,8 @@ BOOL HCDDCGet(IOAVServiceRef av, uint8_t code, uint16_t *cur, uint16_t *max);
 //    "display_controller_id":22021,"firmware_version":0,"local_dimming_range_max":5}
 // monitor_db.json maps that hash to the identity and the monitor's DDC settings; it ships with the
 // tool (next to hdrctl, or in the app). local_monitor_db.json, in the data folder, has the same
-// format and holds monitors detected on this Mac; its entries override the shipped ones. my_monitor.json
-// holds the monitors set up on this Mac, by display UUID:
-//   { "<display UUID>": { "hash": "<hash>", "identity": { ... } }, ... }
-// Before any DDC write, the monitor is read, hashed, and must match its display's entry in
-// my_monitor.json and be in the DB. (Up to 0.2.1 the file held one monitor, keyed by its hash; it's
-// converted when that monitor is next seen.)
+// format and holds monitors detected on this Mac; its entries override the shipped ones. Before any
+// DDC write, the monitor is read and hashed, and the hash must be in the DB.
 
 // The connected monitor's identity values (the keys above), or nil with *why set if one can't be read.
 NSDictionary *HCReadIdentityValues(IOAVServiceRef av, NSDictionary *attrs, NSString **why);
@@ -99,26 +95,11 @@ NSDictionary *HCLoadDB(NSString **error);
 NSString *HCLocalDBPath(void);
 NSDictionary *HCLoadLocalDB(NSString **error);   // just local_monitor_db.json, @{} if it doesn't exist
 NSString *HCPrettyJSON(id object);                // indented, sorted keys
-NSString *HCMyMonitorPath(void);
-// The hash my_monitor.json has for this display (with its identity in *identity), or nil with *why
-// set if there's none or it's invalid, including when its hash isn't the hash of its identity.
-// An old one-monitor file answers for every display.
-NSString *HCReadMyMonitor(NSString *uuid, NSDictionary **identity, NSString **why);
-// The displays my_monitor.json has a monitor for: display UUID -> identity (none for an old
-// one-monitor file, which has no UUID).
-NSDictionary<NSString *, NSDictionary *> *HCMyMonitors(void);
-// Sets this display's entry in my_monitor.json, keeping the other displays' (an old one-monitor file
-// is replaced), and removes an old one-line my_monitor file.
-BOOL HCSaveMyMonitor(NSString *uuid, NSDictionary *identity, NSString **error);
-// If my_monitor.json has no entry for this display, adds one for this identity and logs an info line.
-// An old one-monitor file for this identity is converted; one for another monitor is left alone.
-void HCEnsureMyMonitor(NSString *uuid, NSDictionary *identity);
-// The DB entry for the monitor on this display, if it matches the display's entry in my_monitor.json
-// and is in monitor_db.json. Adds the entry first if there's none (see HCEnsureMyMonitor).
-// Otherwise nil, with *why set (monitor unknown) or *error set (monitor_db.json is invalid).
-NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString *uuid, NSString **why, NSString **error);
+// The DB entry for this monitor, if it's in monitor_db.json or local_monitor_db.json.
+// Otherwise nil, with *why set (monitor unknown) or *error set (a database is invalid).
+NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString **why, NSString **error);
 // The same, for identity values already read with HCReadIdentityValues.
-NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString *uuid, NSString **why, NSString **error);
+NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString **why, NSString **error);
 // The local dimming VCP code from a DB entry, with its levels (name -> value) in *levels,
 // or -1 with *error set if the entry is malformed.
 int HCLocalDimming(NSDictionary *entry, NSDictionary<NSString *, NSNumber *> **levels, NSString **error);

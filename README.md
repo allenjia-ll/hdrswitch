@@ -36,7 +36,7 @@ If your monitor has local dimming that you can change in its own menu, `hdrctl d
 hdrctl --display "<part of display name>" detect
 ```
 
-It asks how many local dimming levels the monitor's menu has and what they're called, then asks you to set each one in the menu while it reads every VCP code (about a minute for the first level, less for the rest). The code that changes with local dimming, and only that code, is the one it uses. Until then it only reads. After you confirm, it writes each level back so you can check it on the monitor, then asks which levels `on` and `off` should use. The result is saved to `local_monitor_db.json` in `~/Library/Application Support/HDR Switch/`, shared with the menu bar app (it overrides the shipped `monitor_db.json` entry for the same monitor), and it offers to open a pre-filled GitHub issue so the monitor can be added for everyone. `my_monitor.json` isn't changed. Quit MonitorControl and other DDC apps first, and keep the monitor awake.
+It asks how many local dimming levels the monitor's menu has and what they're called, then asks you to set each one in the menu while it reads every VCP code (about a minute for the first level, less for the rest). The code that changes with local dimming, and only that code, is the one it uses. Until then it only reads. After you confirm, it writes each level back so you can check it on the monitor, then asks which levels `on` and `off` should use. The result is saved to `local_monitor_db.json` in `~/Library/Application Support/HDR Switch/`, shared with the menu bar app (it overrides the shipped `monitor_db.json` entry for the same monitor), and it offers to open a pre-filled GitHub issue so the monitor can be added for everyone. Quit MonitorControl and other DDC apps first, and keep the monitor awake.
 
 On Windows the same applies, except that there is no `profile` command yet, so only the HDR step is available for other monitors:
 
@@ -55,7 +55,6 @@ macOS:
 - `mac/release.sh`: builds and packages the CLI release zip
 - `mac/app/release.sh`: builds and packages the menu bar app as a DMG
 - `mac/m27p6s-hdr.sh`: wrapper that calls `hdrctl` with the M27P6S defaults
-- `~/Library/Application Support/HDR Switch/my_monitor.json`: your monitor (macOS, shared by `hdrctl` and the app), created on first run (see [Set up your monitor](#set-up-your-monitor-macos))
 
 Windows:
 
@@ -114,51 +113,26 @@ Get-ChildItem -Recurse | Unblock-File
 
 ### Set up your monitor (macOS)
 
-`hdrctl` remembers your monitors in `my_monitor.json`, in `~/Library/Application Support/HDR Switch/` (the menu bar app uses the same file). You don't need to create it: the first command that reads a monitor (`status`, `identify`, `on`, `off`, `toggle` or `ddc set`) adds it from the connected monitor and prints a line like:
-
-```
-Created /path/to/my_monitor.json for M27P6S on display 3D26E98D-83B3-49B2-9C79-43BF6D0227DB (5e482ea7…)
-```
-
-The file holds one monitor per display, keyed by the display's UUID (the one macOS keeps for each monitor; `hdrctl list` shows it), with the monitor's hash and the identity values the hash was made from:
-
-```json
-{
-  "3D26E98D-83B3-49B2-9C79-43BF6D0227DB": {
-    "hash": "5e482ea7b8352801d0f5e03a99b00a6d28c0f4324052af01cff9e6f5d3002008",
-    "identity": {
-      "manufacturer": "SKG",
-      "product_id": 10158,
-      "product_name": "M27P6S",
-      "display_controller_id": 22021,
-      "firmware_version": 0,
-      "local_dimming_range_max": 5
-    }
-  }
-}
-```
-
-To check it, or to switch to the monitor that's connected now:
+There's nothing to set up. Each command reads the connected monitor, hashes its identity, and looks the hash up in `monitor_db.json` (and `local_monitor_db.json`, if you've detected a monitor). To see the result:
 
 ```sh
-./hdrctl identify          # should say "listed" and "matches"
-./hdrctl identify --save   # set my_monitor.json's entry for the connected monitor
+./hdrctl identify          # should say "listed"
 ```
 
-With more than one external display, pick one with `--display <name or UUID>`. macOS gives two identical monitors (same model, no serial number in the EDID) a UUID by the port they're on, so if you swap their cables, they swap entries.
+With more than one external display, pick one with `--display <name or UUID>` (`hdrctl list` shows the UUIDs). The UUID is the one macOS keeps for each monitor. macOS gives two identical monitors (same model, no serial number in the EDID) a UUID by the port they're on, so if you swap their cables, they swap their app settings.
 
-Up to 0.2.1 the file held one monitor, keyed by its hash; it's converted to the new format the next time that monitor is read (0.2.1 and older can't read the new format, and change nothing until `identify --save`). An old one-line `my_monitor` file from 0.1.4 is replaced by `my_monitor.json` automatically. Before 0.2.1, `my_monitor.json` and `local_monitor_db.json` were kept next to `hdrctl`; the first run of a newer `hdrctl` moves them to Application Support (unless it already has its own copy, which then wins; `hdrctl identify` points out any leftover). The shipped `monitor_db.json` stays next to `hdrctl`: if you copy `hdrctl` to another folder, copy `monitor_db.json` with it, or use a symlink, since it's looked up next to the real binary.
+Up to the 0.2.x releases, a `my_monitor.json` file recorded your monitor. It's no longer used, and you can delete it from `~/Library/Application Support/HDR Switch/`. Before 0.2.1, `local_monitor_db.json` was kept next to `hdrctl`; the first run of a newer `hdrctl` moves it to Application Support (unless it already has its own copy, which then wins; `hdrctl identify` points out any leftover). The shipped `monitor_db.json` stays next to `hdrctl`: if you copy `hdrctl` to another folder, copy `monitor_db.json` with it, or use a symlink, since it's looked up next to the real binary.
 
 ### Set up your monitor (Windows)
 
-The same as on macOS: `win\my_monitor.json` (or the one in the unzipped release folder) is created on first run, and these check or rewrite it:
+`hdrctl.exe` remembers your monitor in `win\my_monitor.json` (or the one in the unzipped release folder). It's created on first run, and these check or rewrite it:
 
 ```powershell
 .\hdrctl.exe identify          # should say "listed" and "matches"
 .\hdrctl.exe identify --save   # rewrite my_monitor.json for the connected monitor
 ```
 
-The hash is the same on both platforms. A `my_monitor.json` from a Mac up to 0.2.1 also works on Windows; the newer per-display format doesn't (Windows still keeps one monitor).
+The hash is the same on both platforms, so `monitor_db.json` entries work on both.
 
 ### Build from source (macOS)
 
@@ -167,7 +141,7 @@ mac/build.sh          # writes mac/hdrctl
 # optional: sudo ln -s "$PWD/mac/hdrctl" /usr/local/bin/hdrctl
 ```
 
-The build writes `mac/hdrctl` next to the source and `monitor_db.json`. A symlink keeps it able to find `monitor_db.json`; a copy needs it copied too. `my_monitor.json` and `local_monitor_db.json` are in Application Support either way.
+The build writes `mac/hdrctl` next to the source and `monitor_db.json`. A symlink keeps it able to find `monitor_db.json`; a copy needs it copied too. `local_monitor_db.json` is in Application Support either way.
 
 ### Build the menu bar app (macOS, in progress)
 
@@ -176,7 +150,7 @@ mac/app/build.sh                              # writes mac/app/build/HDR Switch.
 open "mac/app/build/HDR Switch.app"
 ```
 
-The app lives in the menu bar only (no Dock icon). Clicking its icon opens a panel with a section for each external monitor (its name, an HDR toggle, and dropdowns for the color profile (the installed RGB display profiles; a pick applies right away) and local dimming (the levels in `monitor_db.json`)), with a refresh button by the first name; **Settings…** opens the settings window. Refresh looks for connected monitors again and re-reads everything over a new DDC connection. The toggle does the same as `hdrctl on` / `off`: HDR, then the color profile, then local dimming. In Settings, "When HDR is turned on" and "When HDR is turned off" each have **Set color profile to** and **Set local dimming to**, each a checkbox and a dropdown: checked, the toggle sets that value after switching; unchecked, it leaves it alone. Settings are kept for each monitor (by its display UUID), with a **Monitor** menu at the top when there's more than one: the connected ones, and those in `my_monitor.json`. The local dimming levels come from `monitor_db.json` for that display's monitor in `my_monitor.json`. The defaults are what `hdrctl` does: BT.2020 and Standard for on, Display P3 and Off for off. Each change is saved right away (per user), as in macOS's own Settings windows; it applies from the next HDR switch. **Detect Monitor…** in Settings runs the same detection as `hdrctl detect` on the monitor shown, as a window of steps (Back / Continue): name the levels, set each one in the monitor's menu while it reads, check each level it writes back, choose the levels for HDR on and off, and Save (after a confirmation). The result is added to `local_monitor_db.json` in `~/Library/Application Support/HDR Switch/` (other monitors in it are kept; if it already has this monitor, Save shows what changes and asks before replacing it), and the last step offers to contribute it on GitHub. When that file exists, **View Detected Monitor…** next to it shows what's in it (with a dropdown if there are several monitors), with **Contribute on GitHub…** and **OK**. **Delete Detected Monitor…** moves `local_monitor_db.json` to the Trash (after asking), so the shipped `monitor_db.json` applies again. If the monitor isn't supported (not in `monitor_db.json`, or not the one `my_monitor.json` has for its display), its name gets an exclamation mark, and the toggle switches HDR and the color profile only, leaving local dimming alone. If the monitor doesn't answer over DDC within 3 seconds (e.g. it's asleep), the panel shows a warning and local dimming is unknown. The app ships `monitor_db.json` inside `HDR Switch.app` and keeps `my_monitor.json` in `~/Library/Application Support/HDR Switch/`, created on first use. It also reads a `local_monitor_db.json` there (for example one from `hdrctl detect`, copied over), whose entries override the shipped ones. To quit it, choose **Quit HDR Switch** at the bottom of the panel (or `pkill -x HDRSwitch`). It's Swift (SwiftUI inside an AppKit status item, so it runs on macOS 12) built with `swiftc`; no Xcode project is needed, and it uses the same `mac/core` as the CLI.
+The app lives in the menu bar only (no Dock icon). Clicking its icon opens a panel with a section for each external monitor (its name, an HDR toggle, and dropdowns for the color profile (the installed RGB display profiles; a pick applies right away) and local dimming (the levels in `monitor_db.json`)), with a refresh button by the first name; **Settings…** opens the settings window. Refresh looks for connected monitors again and re-reads their state over a new DDC connection. The toggle does the same as `hdrctl on` / `off`: HDR, then the color profile, then local dimming. In Settings, "When HDR is turned on" and "When HDR is turned off" each have **Set color profile to** and **Set local dimming to**, each a checkbox and a dropdown: checked, the toggle sets that value after switching; unchecked, it leaves it alone. Settings are kept for each monitor (by its display UUID), with a **Monitor** menu at the top when there's more than one connected. The local dimming levels are those the panel found for that monitor in `monitor_db.json`. The defaults are what `hdrctl` does: BT.2020 and Standard for on, Display P3 and Off for off. Each change is saved right away (per user), as in macOS's own Settings windows; it applies from the next HDR switch. **Detect Monitor…** in Settings runs the same detection as `hdrctl detect` on the monitor shown, as a window of steps (Back / Continue): name the levels, set each one in the monitor's menu while it reads, check each level it writes back, choose the levels for HDR on and off, and Save (after a confirmation). The result is added to `local_monitor_db.json` in `~/Library/Application Support/HDR Switch/` (other monitors in it are kept; if it already has this monitor, Save shows what changes and asks before replacing it), and the last step offers to contribute it on GitHub. When that file exists, **View Detected Monitor…** next to it shows what's in it (with a dropdown if there are several monitors), with **Contribute on GitHub…** and **OK**. **Delete Detected Monitor…** moves `local_monitor_db.json` to the Trash (after asking), so the shipped `monitor_db.json` applies again. If the monitor isn't supported (not in `monitor_db.json`), its name gets an exclamation mark, and the toggle switches HDR and the color profile only, leaving local dimming alone. If the monitor doesn't answer over DDC within 3 seconds (e.g. it's asleep), the panel shows a warning and local dimming is unknown. The app ships `monitor_db.json` inside `HDR Switch.app`. It also reads a `local_monitor_db.json` in `~/Library/Application Support/HDR Switch/` (for example one from `hdrctl detect`, copied over), whose entries override the shipped ones. To quit it, choose **Quit HDR Switch** at the bottom of the panel (or `pkill -x HDRSwitch`). It's Swift (SwiftUI inside an AppKit status item, so it runs on macOS 12) built with `swiftc`; no Xcode project is needed, and it uses the same `mac/core` as the CLI.
 
 ### Build from source (Windows)
 
@@ -314,7 +288,7 @@ SDR_PROFILE=~/Library/ColorSync/Profiles/M27P6S.icc ./m27p6s-hdr.sh off
 - **Color profile** is set with the public ColorSync API (`ColorSyncDeviceSetCustomProfiles`), the same setting as System Settings > Displays > Color profile. It applies to the current user.
 - **Local dimming** is a monitor setting, changed over DDC/CI with IOAVService (private IOKit API, Apple Silicon only). On the M27P6S it is vendor VCP code `0xF4`: `0` = Off, `2` = Standard. This was found by dumping all codes, changing local dimming in the monitor's menu, and diffing. Other models will likely use a different code.
 - The profile and DDC connection are resolved before HDR is switched, so a bad profile name or missing monitor fails without changing anything. After switching HDR, the tool waits for the display to settle, applies the profile, then sets local dimming.
-- Before any DDC write (`on`, `off`, `toggle`, `ddc set`), the tool reads the monitor's identity, hashes it, and looks it up in `my_monitor.json` and `monitor_db.json`. If it isn't found, it prints `monitor unknown` and **stops without changing anything** (see [Safety checks](#safety-checks)).
+- Before any DDC write (`on`, `off`, `toggle`, `ddc set`), the tool reads the monitor's identity, hashes it, and looks it up in `monitor_db.json` (on Windows, also in `my_monitor.json`). If it isn't found, it prints `monitor unknown` and **stops without changing anything** (see [Safety checks](#safety-checks)).
 - The monitor silently drops DDC writes while busy (especially just after an HDR switch), so local dimming is written, read back, and retried for up to ~10 seconds.
 
 ### Windows
@@ -324,7 +298,7 @@ The structure is the same, but every API used is public and documented, so there
 - **HDR** is switched with `DisplayConfigSetDeviceInfo`. The tool prefers `DISPLAYCONFIG_DEVICE_INFO_SET_HDR_STATE` (Windows 11 24H2+), which controls HDR separately from wide colour gamut, and falls back to the older `SET_ADVANCED_COLOR_STATE` on Windows 10 and early Windows 11. This is the same setting as Settings > System > Display > Use HDR.
 - **Display identity** comes from one `DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME` call, which returns the EDID manufacturer ID, product code and friendly name. Note that Windows reports the manufacturer ID as the raw big-endian EDID bytes, so it is byte-swapped before being decoded into letters, while the product code is already in host order.
 - **Local dimming** uses the same vendor VCP code `0xF4` over DDC/CI, through the public monitor-configuration API in `dxva2.dll` (`SetVCPFeature` / `GetVCPFeatureAndVCPFeatureReply`). The DDC handle is resolved by matching the GDI device name (`\\.\DISPLAY1`) that both the display-config source and the `HMONITOR` report.
-- The DDC connection is opened and the monitor looked up in `my_monitor.json` and `monitor_db.json` before HDR is switched, so a missing or unknown monitor changes nothing. After switching HDR the tool waits ~1.5 s for the mode set to finish, then writes local dimming with the same read-back-and-retry loop.
+- The DDC connection is opened and the monitor looked up in `monitor_db.json` before HDR is switched, so a missing or unknown monitor changes nothing. After switching HDR the tool waits ~1.5 s for the mode set to finish, then writes local dimming with the same read-back-and-retry loop.
 - Local dimming is read back and retried for up to ~10 seconds, as on macOS.
 - **One x64 binary covers Windows 10 and 11.** The newer HDR API is not a separate exported function, only a different integer passed to the same `DisplayConfigSetDeviceInfo`, so nothing fails to resolve at load time on Windows 10; the choice happens at runtime instead. `--legacy-hdr` forces the older API, which is how the Windows 10 path can be exercised on Windows 11. `status` prints which API answered.
 - DDC **reads** are retried too, for up to ~2 seconds per code. On a busy bus a read often gets no reply at all, which would otherwise make the safety checks fail when commands run back to back. A read that succeeds is never retried, so a value that comes back *wrong* still fails its check immediately rather than getting another chance at matching.
@@ -350,7 +324,7 @@ The values are written as compact JSON in that order and hashed with SHA-256:
 {"manufacturer":"SKG","product_id":10158,"product_name":"M27P6S","display_controller_id":22021,"firmware_version":0,"local_dimming_range_max":5}
 ```
 
-The hash must equal the `hash` of the display's entry in `my_monitor.json` and be a key in `monitor_db.json`. The entry is added from the connected monitor the first time that display is used, and its `hash` must be the hash of its own `identity` section, so a hand-edited file is rejected rather than trusted. That entry holds the identity and the monitor's settings:
+The hash must be a key in `monitor_db.json` or `local_monitor_db.json`. On Windows it must also equal the key in `my_monitor.json`, which is created from the connected monitor on first run; that key must be the hash of its own `identity` section, so a hand-edited file is rejected rather than trusted. The database entry holds the identity and the monitor's settings:
 
 ```json
 "settings": {
@@ -361,11 +335,11 @@ The hash must equal the `hash` of the display's entry in `my_monitor.json` and b
 }
 ```
 
-`on` uses the `standard` level and `off` uses `off`. If any value can't be read, `my_monitor.json` is invalid or for a different monitor, or the hash isn't in the database, the tool prints `monitor unknown: <reason>` and exits with status 1 **before** switching HDR or the profile. `list`, `status`, `hdr`, `profile` (macOS), `identify`, `ddc get` and `ddc dump` don't write to the monitor and work on any display.
+`on` uses the `standard` level and `off` uses `off`. If any value can't be read or the hash isn't in the database (or, on Windows, `my_monitor.json` is invalid or for a different monitor), the tool prints `monitor unknown: <reason>` and exits with status 1 **before** switching HDR or the profile. `list`, `status`, `hdr`, `profile` (macOS), `identify`, `ddc get` and `ddc dump` don't write to the monitor and work on any display.
 
 `ddc set` accepts only the local dimming code and a level listed for the monitor. Everything else is refused, because other codes can factory-reset the monitor, change input or power, or hit vendor service settings.
 
-To add a monitor: map its local dimming code (`hdrctl ddc dump` with local dimming Off, change it in the monitor's menu, dump again, diff), run `hdrctl identify`, and add an entry under the printed hash. After a firmware update the hash may change and the tool will report `monitor unknown`; redo the mapping before adding the new hash. The firmware can't be hashed over DDC/CI. VCP 0xC9 is the only version the monitor reports, and this vendor may leave it at 0, so a firmware update could go unnoticed.
+To add a monitor: map its local dimming code (`hdrctl ddc dump` with local dimming Off, change it in the monitor's menu, dump again, diff), run `hdrctl identify`, and add an entry under the printed hash. After a firmware update the hash may change and the tool will report `monitor unknown`; redo the mapping before adding the new hash. The firmware can't be hashed over DDC/CI. VCP 0xC9 is the only version the monitor reports, and this vendor may leave it at 0, so a firmware update could go unnoticed. **After updating a monitor's firmware, run Detect Monitor (or `hdrctl detect`) again**, or at least compare each level with the monitor's menu: the detection checks each level on the monitor itself, while the hash can stay the same even if a level's meaning changed. To be safe until then, uncheck **Set local dimming to** in Settings.
 
 On Windows, the EDID values come from the display-config API and the VCP values from `dxva2.dll`. All six were confirmed to read identically on Windows. The hash is computed with the built-in BCrypt API, and `monitor_db.json` is read by a small JSON parser in `win/hdrctl.cpp`, so there are no extra dependencies.
 
@@ -374,7 +348,7 @@ Each change sends one 6-byte DDC "set" for VCP 0xF4 only, never a table of setti
 ## Troubleshooting
 
 - **`no connected display matches "M27P6S"`**: the monitor isn't connected to this Mac (or a KVM/switch has it on another input). Run `hdrctl list` to see display names.
-- **`monitor unknown: ...`**: the reason follows. *no reply*: DDC was busy; rerun, or quit MonitorControl (macOS) or other DDC apps (Windows). *connected monitor doesn't match my_monitor.json: firmware_version is 1, my_monitor.json has 0*: the listed fields changed, usually a different monitor or new firmware; if it is your monitor, run `hdrctl identify --save`. *my_monitor.json isn't valid*: it was edited or damaged; run `hdrctl identify --save`. *isn't in monitor_db.json*: a monitor without an entry yet. Nothing was changed. See [Safety checks](#safety-checks).
+- **`monitor unknown: ...`**: the reason follows. *no reply*: DDC was busy; rerun, or quit MonitorControl (macOS) or other DDC apps (Windows). On Windows, *connected monitor doesn't match my_monitor.json: firmware_version is 1, my_monitor.json has 0*: the listed fields changed, usually a different monitor or new firmware; if it is your monitor, run `hdrctl identify --save`. *my_monitor.json isn't valid*: it was edited or damaged; run `hdrctl identify --save`. *isn't in monitor_db.json*: a monitor without an entry yet. Nothing was changed. See [Safety checks](#safety-checks).
 - **`hdrctl` hangs with no output**: the monitor is asleep and doesn't answer DDC reads. Wake it and rerun.
 - **`warning: couldn't confirm local dimming ...`**: the DDC bus is shared, and other DDC apps such as MonitorControl can garble replies. Quit them and rerun, or check the monitor's menu. `hdrctl ddc get 0xF4` shows the current value (it may need a couple of tries).
 - **Wrong profile applied** (macOS): check `env | grep _PROFILE` for overrides, and `which -a hdrctl` for an older copy on your PATH.

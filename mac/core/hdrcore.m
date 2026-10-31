@@ -65,7 +65,7 @@ static NSString *gDBPath;
 void HCSetDBPath(NSString *path) { gDBPath = path; }
 
 // Before 0.2.1 the CLI kept these next to hdrctl.
-static NSArray<NSString *> *toolDirectoryFiles(void) { return @[ @"my_monitor.json", @"my_monitor", @"local_monitor_db.json" ]; }
+static NSArray<NSString *> *toolDirectoryFiles(void) { return @[ @"local_monitor_db.json" ]; }
 
 NSArray<NSString *> *HCMigrateToolDirectoryFiles(void) {
     NSString *from = HCToolDirectory(), *to = HCDataDirectory();
@@ -455,12 +455,6 @@ static NSString *jsonString(NSString *s) {
     return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
 }
 
-// Identity fields, in hash order.
-static NSArray<NSString *> *identityKeys(void) {
-    return @[ @"manufacturer", @"product_id", @"product_name",
-              @"display_controller_id", @"firmware_version", @"local_dimming_range_max" ];
-}
-
 NSDictionary *HCReadIdentityValues(IOAVServiceRef av, NSDictionary *attrs, NSString **why) {
     NSString *mfr = attrs[@"ManufacturerID"], *product = attrs[@"ProductName"];
     NSNumber *pid = attrs[@"ProductID"];
@@ -602,129 +596,13 @@ NSDictionary *HCSaveLocalMonitor(NSDictionary *identity, uint8_t code, NSArray<N
     return entry;
 }
 
-NSString *HCMyMonitorPath(void) { return dataPath(@"my_monitor.json"); }
-
-// The file up to 0.2.1: one monitor, keyed by its hash, { "<hash>": { "identity": { ... } } }.
-static BOOL isOneMonitorFile(NSDictionary *json) {
-    NSDictionary *entry = json.allValues.firstObject;
-    return json.count == 1 && [json.allKeys.firstObject length] == 64 &&
-           [entry isKindOfClass:NSDictionary.class] && !entry[@"hash"];
-}
-
-// my_monitor.json: @{} if it doesn't exist, or nil with *why set if it isn't a JSON object.
-static NSDictionary *readMyMonitors(NSString **why) {
-    NSString *path = HCMyMonitorPath();
-    NSData *d = path ? [NSData dataWithContentsOfFile:path] : nil;
-    if (!d) return @{};
-    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL];
-    if (![json isKindOfClass:NSDictionary.class]) {
-        *why = @"my_monitor.json isn't valid: it must be a JSON object (run: hdrctl identify --save)";
-        return nil;
-    }
-    return json;
-}
-
-NSString *HCReadMyMonitor(NSString *uuid, NSDictionary **identity, NSString **why) {
-    NSDictionary *json = readMyMonitors(why);
-    if (!json) return nil;
-    BOOL oneMonitor = isOneMonitorFile(json);
-    NSDictionary *entry = oneMonitor ? json.allValues.firstObject : uuid ? json[uuid] : nil;
-    if (![entry isKindOfClass:NSDictionary.class]) {
-        *why = json.count ? [NSString stringWithFormat:@"my_monitor.json has no monitor for display %@ (run: hdrctl identify --save)", uuid]
-                          : @"my_monitor.json not found (run: hdrctl identify --save)";
-        return nil;
-    }
-    NSString *hash = oneMonitor ? json.allKeys.firstObject : entry[@"hash"];
-    NSDictionary *ident = entry[@"identity"];
-    NSString *canonical = [ident isKindOfClass:NSDictionary.class] ? HCIdentityJSON(ident) : nil;
-    if (!canonical) {
-        *why = @"my_monitor.json isn't valid: an identity section is missing or incomplete (run: hdrctl identify --save)";
-        return nil;
-    }
-    if (![hash isKindOfClass:NSString.class] || ![HCSHA256Hex(canonical) isEqualToString:hash]) {
-        *why = @"my_monitor.json isn't valid: a hash doesn't match its identity section (run: hdrctl identify --save)";
-        return nil;
-    }
-    if (identity) *identity = ident;
-    return hash;
-}
-
-NSDictionary<NSString *, NSDictionary *> *HCMyMonitors(void) {
-    NSString *why = nil;
-    NSDictionary *json = readMyMonitors(&why);
-    NSMutableDictionary *out = [NSMutableDictionary dictionary];
-    if (!json || isOneMonitorFile(json)) return out;
-    for (NSString *uuid in json) {
-        NSDictionary *identity = nil;
-        if (HCReadMyMonitor(uuid, &identity, &why)) out[uuid] = identity;
-    }
-    return out;
-}
-
-BOOL HCSaveMyMonitor(NSString *uuid, NSDictionary *identity, NSString **error) {
-    NSString *canonical = HCIdentityJSON(identity), *path = HCMyMonitorPath(), *why = nil;
-    if (!canonical) return fail(error, @"incomplete identity");
-    if (!uuid.length) return fail(error, @"the display has no UUID");
-    if (!path) return fail(error, @"can't find the data folder (~/Library/Application Support/HDR Switch)");
-    NSDictionary *json = readMyMonitors(&why);   // an invalid or one-monitor file is replaced
-    NSMutableDictionary *all = json && !isOneMonitorFile(json) ? [json mutableCopy] : [NSMutableDictionary dictionary];
-    all[uuid] = @{ @"hash": HCSHA256Hex(canonical), @"identity": identity };
-    NSError *err = nil;
-    if (![[HCPrettyJSON(all) stringByAppendingString:@"\n"] writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err])
-        return fail(error, @"%@", err.localizedDescription);
-    [[NSFileManager defaultManager] removeItemAtPath:dataPath(@"my_monitor") error:NULL];   // old one-line format
-    return YES;
-}
-
-void HCEnsureMyMonitor(NSString *uuid, NSDictionary *identity) {
-    NSString *path = HCMyMonitorPath(), *why = nil;
-    NSDictionary *json = readMyMonitors(&why);
-    if (!path || !json || !uuid.length) return;   // HCReadMyMonitor reports an invalid file
-    NSString *hash = HCSHA256Hex(HCIdentityJSON(identity));
-    BOOL oneMonitor = isOneMonitorFile(json);
-    if (oneMonitor ? ![json.allKeys.firstObject isEqualToString:hash] : json[uuid] != nil) return;
-    NSString *oldPath = dataPath(@"my_monitor");
-    NSString *oldHash = json.count ? nil : [[NSString stringWithContentsOfFile:oldPath encoding:NSUTF8StringEncoding error:NULL]
-                                            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSString *err = nil;
-    if (!HCSaveMyMonitor(uuid, identity, &err)) { logWarn(@"couldn't update %@: %@", path, err); return; }
-    if (oneMonitor)
-        logInfo(@"Updated %@ to list monitors by display: %@ is on display %@", path, identity[@"product_name"], uuid);
-    else if (oldHash)
-        logInfo(@"Replaced %@ with my_monitor.json for %@%@", oldPath, identity[@"product_name"],
-                [oldHash isEqualToString:hash] ? @""
-                    : [NSString stringWithFormat:@" (the old file was for a different monitor, %@)", oldHash]);
-    else
-        logInfo(@"%@ %@ for %@ on display %@ (%@)", json.count ? @"Added to" : @"Created", path,
-                identity[@"product_name"], uuid, hash);
-}
-
-// "firmware_version is 1, my_monitor.json has 0" for each field that differs.
-static NSString *identityDiff(NSDictionary *live, NSDictionary *mine) {
-    NSMutableArray *out = [NSMutableArray array];
-    for (NSString *k in identityKeys())
-        if (![live[k] isEqual:mine[k]])
-            [out addObject:[NSString stringWithFormat:@"%@ is %@, my_monitor.json has %@", k, live[k], mine[k]]];
-    return out.count ? [out componentsJoinedByString:@"; "] : nil;
-}
-
-NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString *uuid, NSString **why, NSString **error) {
+NSDictionary *HCFindMonitor(IOAVServiceRef av, NSDictionary *attrs, NSString **why, NSString **error) {
     NSDictionary *live = HCReadIdentityValues(av, attrs, why);
-    return live ? HCFindMonitorForIdentity(live, uuid, why, error) : nil;
+    return live ? HCFindMonitorForIdentity(live, why, error) : nil;
 }
 
-NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString *uuid, NSString **why, NSString **error) {
+NSDictionary *HCFindMonitorForIdentity(NSDictionary *live, NSString **why, NSString **error) {
     NSString *hash = HCSHA256Hex(HCIdentityJSON(live));
-    HCEnsureMyMonitor(uuid, live);
-    NSDictionary *mineIdentity = nil;
-    NSString *mine = HCReadMyMonitor(uuid, &mineIdentity, why);
-    if (!mine) return nil;
-    if (![hash isEqualToString:mine]) {
-        *why = [NSString stringWithFormat:@"connected monitor doesn't match my_monitor.json: %@ "
-                                           "(if this is your monitor, run: hdrctl identify --save)",
-                identityDiff(live, mineIdentity) ?: hash];
-        return nil;
-    }
     NSDictionary *db = HCLoadDB(error);
     if (!db) return nil;
     NSDictionary *entry = db[hash];

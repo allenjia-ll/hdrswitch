@@ -9,15 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Several external monitors: the menu bar app's panel has a section for each (its name, HDR switch, color profile and local dimming), with the refresh button by the first name; it refreshes them all and looks for newly connected monitors. With none connected, the panel says so. Settings are kept for each monitor, with a **Monitor** menu at the top of the settings window when there's more than one; Detect Monitor runs on the monitor shown there. A monitor without its own settings starts from those saved before (0.2.1 kept one set).
+- Several external monitors: the menu bar app's panel has a section for each (its name, HDR switch, color profile and local dimming), with the refresh button by the first name; it refreshes them all and looks for newly connected monitors. With none connected, the panel says so. Settings are kept for each monitor, by display UUID, with a **Monitor** menu at the top of the settings window when there's more than one connected; Detect Monitor runs on the monitor shown there. A monitor without its own settings starts from those saved before (0.2.1 kept one set).
 - `hdrctl list` shows each display's UUID, and marks the built-in one.
 - Menu bar app: for trying the layout with two monitors, `open "HDR Switch.app" --args -fakeMonitor "<name>"` adds a made-up, unsupported monitor to the panel and Settings. Nothing is sent to it, its switch shows the color profile from its settings, and its settings are kept for that launch only.
 
 ### Changed
 
 - Monitors are told apart by their display UUID, the one macOS keeps for each monitor, instead of by name: the app no longer looks only for a display named M27P6S, and `hdrctl` without `--display` uses the only external display (with several, `--display` takes part of a name or a UUID). DDC is sent over the connection of the display's own port, found in the IORegistry, so two identical monitors each get their own.
-- `my_monitor.json` holds one monitor per display UUID, `{ "<UUID>": { "hash": …, "identity": … } }`. A display's entry is added the first time it's used; an existing one-monitor file is converted when that monitor is next read. 0.2.1 and older don't read the new format (they change nothing until `hdrctl identify --save`), and neither does the Windows port yet.
+- macOS: `my_monitor.json` is gone, along with `hdrctl identify --save`. The hash of the connected monitor just has to be in `monitor_db.json` or `local_monitor_db.json`, which already kept out unknown monitors. An old `my_monitor.json` is ignored and can be deleted. Settings lists connected monitors only, and shows the local dimming levels the panel read from the monitor. The Windows port still uses the file.
 - Menu bar app: when local dimming isn't available, Settings suggests Detect Monitor.
+- Menu bar app: a refresh after the first skips the three identity reads, using the monitor's hash from the last time (kept in memory while the app runs), so it's quicker. Anything that can write to the monitor still reads its identity first.
+- The README and Settings say to run the detection again after updating a monitor's firmware, since the hash may not change.
 - Menu bar app: the settings window resizes whenever its content changes (e.g. choosing a monitor whose settings show a note), not only after a detection is saved or deleted.
 
 - Menu bar app: the settings window starts with the name of the monitor its settings are for.

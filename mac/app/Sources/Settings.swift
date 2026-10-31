@@ -63,17 +63,24 @@ final class SettingsModel: ObservableObject {
     @Published var onDimming = SettingRule(enabled: false, value: "") { didSet { save(.onDimming, onDimming) } }
     @Published var offDimming = SettingRule(enabled: false, value: "") { didSet { save(.offDimming, offDimming) } }
     private var loading = false   // showing the saved values, without writing them back
-    @Published private(set) var monitors: [Monitor] = []   // connected first, then the others set up on this Mac
+    @Published private(set) var monitors: [Monitor] = []   // the connected external displays
     @Published private(set) var selected = ""               // the UUID of the monitor shown
     @Published private(set) var profiles: [String] = []
-    @Published private(set) var levels: [String] = []   // the selected monitor's levels, by value
+    @Published private(set) var levels: [String] = []   // the selected monitor's levels, by value, once read
     @Published private(set) var hasDetected = false      // local_monitor_db.json exists
+
+    private let displays: DisplayList
+
+    init(displays: DisplayList) { self.displays = displays }
 
     var selectedTitle: String { monitors.first { $0.uuid == selected }?.title ?? "No monitor" }
 
     // Shows the saved settings, for the same monitor as before if it's still listed.
     func reload() {
-        monitors = Self.listMonitors()
+        monitors = displays.monitors.map { m in
+            let shared = displays.monitors.filter { $0.name == m.name }.count > 1
+            return Monitor(uuid: m.uuid, title: shared ? "\(m.name) (\(m.uuid.prefix(8)))" : m.name)
+        }
         profiles = HCListProfiles().compactMap { $0["name"] as? String }
         select(monitors.contains { $0.uuid == selected } ? selected : monitors.first?.uuid ?? "")
     }
@@ -89,9 +96,10 @@ final class SettingsModel: ObservableObject {
         reloadLevels()
     }
 
-    // After a detection is saved or deleted: the selected monitor's levels may have changed.
+    // The levels the popup read from the selected monitor (no DDC here, so it's instant; they arrive
+    // a moment after a refresh, and this is called again then), stored by their database names.
     func reloadLevels() {
-        levels = Self.levels(uuid: selected)
+        levels = displays.monitors.first { $0.uuid == selected }?.dimmingLevels.map { $0.lowercased() } ?? []
         hasDetected = Self.hasDetectedMonitors()
     }
 
@@ -99,37 +107,10 @@ final class SettingsModel: ObservableObject {
         if !loading && !selected.isEmpty { Preferences.set(rule, uuid: selected, value) }
     }
 
-    // The connected external displays, then the monitors in my_monitor.json that aren't connected.
-    private static func listMonitors() -> [Monitor] {
-        var named: [(uuid: String, name: String)] = HCAllDisplays().compactMap { d in
-            guard !((d["builtin"] as? Bool) ?? false), let uuid = d["uuid"] as? String, !uuid.isEmpty else { return nil }
-            return (uuid, d["name"] as? String ?? "Display")
-        }
-        for (uuid, identity) in HCMyMonitors().sorted(by: { $0.key < $1.key }) where !named.contains(where: { $0.uuid == uuid }) {
-            named.append((uuid, identity["product_name"] as? String ?? "Monitor"))
-        }
-        if let name = FakeMonitor.name { named.append((FakeMonitor.uuid, name)) }
-        return named.map { m in
-            let shared = named.filter { $0.name == m.name }.count > 1
-            return Monitor(uuid: m.uuid, title: shared ? "\(m.name) (\(m.uuid.prefix(8)))" : m.name)
-        }
-    }
-
     // The file exists, even if it's damaged or empty: the viewer says so.
     private static func hasDetectedMonitors() -> Bool {
         guard let path = HCLocalDBPath() else { return false }
         return FileManager.default.fileExists(atPath: path)
-    }
-
-    // The local dimming levels in monitor_db.json for the monitor my_monitor.json has on this display.
-    // No DDC, so it's instant; empty if that monitor isn't set up yet or isn't supported.
-    private static func levels(uuid: String) -> [String] {
-        var why: NSString?, err: NSString?, levels: NSDictionary?
-        guard !uuid.isEmpty, let hash = HCReadMyMonitor(uuid, nil, &why) as String?,
-              let entry = HCLoadDB(&err)?[hash] as? [AnyHashable: Any],
-              HCLocalDimming(entry, &levels, &err) >= 0,
-              let named = levels as? [String: NSNumber] else { return [] }
-        return named.sorted { $0.value.intValue < $1.value.intValue }.map { $0.key }
     }
 }
 
@@ -235,7 +216,7 @@ struct SettingsView: View {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             } else if model.levels.isEmpty {
-                Text("Local dimming isn't available: this monitor isn't supported, or hasn't been set up yet. Open the HDR Switch menu with it connected, or use Detect Monitor below.")
+                Text("Local dimming isn't available: this monitor isn't supported, or it didn't answer. To add it, use Detect Monitor below.")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -245,7 +226,7 @@ struct SettingsView: View {
                     .font(.system(size: 13, weight: .bold))
                 Panel {
                     HStack(alignment: .center) {
-                        Text("Find your monitor's local dimming setting and its levels, and save them to local_monitor_db.json.")
+                        Text("Find your monitor's local dimming setting and its levels, and save them to local_monitor_db.json. Run this again after updating the monitor's firmware.")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

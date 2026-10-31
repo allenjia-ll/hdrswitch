@@ -55,6 +55,7 @@ final class MonitorModel: ObservableObject {
     private var skyLightLoaded: Bool { Self.skyLightError == nil }
     private var profileURLs: [String: URL] = [:]
     private let work = ddcQueue
+    private var knownHash: String?   // the monitor's identity hash from its last identity read; only on `work`
 
     // Loaded once for all monitors: nil, or why HDR can't be switched.
     private static let skyLightError: String? = {
@@ -86,7 +87,7 @@ final class MonitorModel: ObservableObject {
         hdrOn = HCIsHDR(d)
         profile = HCCurrentProfile(d)
         if support != .unsupported { dimming = "…" }
-        run(d, warnIfSkipped: nil) { _ in nil }
+        run(d, warnIfSkipped: nil, readOnly: true) { _ in nil }
     }
 
     // The same steps as hdrctl on/off: HDR, then the color profile and the local dimming level from
@@ -159,13 +160,15 @@ final class MonitorModel: ObservableObject {
 
     // Runs `change` on `work` after looking up the monitor (before anything changes, like hdrctl),
     // then reads everything back. `change` returns a problem to show, or nil. `warnIfSkipped` is
-    // shown if the monitor couldn't be reached, so local dimming wasn't touched.
-    private func run(_ d: CGDirectDisplayID, warnIfSkipped: String?, _ change: @escaping (Lookup) -> String?) {
+    // shown if the monitor couldn't be reached, so local dimming wasn't touched. Only a refresh, which
+    // writes nothing, is `readOnly`: it may use knownHash, and everything else reads the identity.
+    private func run(_ d: CGDirectDisplayID, warnIfSkipped: String?, readOnly: Bool = false,
+                     _ change: @escaping (Lookup) -> String?) {
         busy = true
         warning = nil
         work.async {
             HCDDCClearTimeout()
-            let lookup = self.lookUpDimming(d)
+            let lookup = self.lookUpDimming(d, readOnly: readOnly)
             let problem = change(lookup)
             let snapshot = self.snapshot(d, lookup)
             let profiles = HCListProfiles().compactMap { p -> (String, URL)? in
@@ -207,30 +210,38 @@ final class MonitorModel: ObservableObject {
 
     private enum Lookup {
         case supported(Dimming)
-        case unsupported   // read fine, but not in monitor_db.json or not my_monitor.json
+        case unsupported   // read fine, but not in monitor_db.json
         case unreachable   // no DDC connection, no reply, or timed out
 
         var dimming: Dimming? { if case .supported(let d) = self { return d } else { return nil } }
     }
 
-    // Local dimming settings for the monitor, if it's in monitor_db.json and matches its display's
-    // entry in my_monitor.json (added on first use). Blocking DDC reads, so only on `work`.
-    private func lookUpDimming(_ d: CGDirectDisplayID) -> Lookup {
+    // Local dimming settings for the monitor, if it's in monitor_db.json. Blocking DDC reads, so only
+    // on `work`. The identity is read from the monitor each time, unless this is `readOnly` and
+    // knownHash is in the database: its three reads are most of a refresh, and a refresh writes
+    // nothing, so a hash that's out of date (new firmware) can only show the wrong level for a while.
+    private func lookUpDimming(_ d: CGDirectDisplayID, readOnly: Bool) -> Lookup {
         var attrs: NSDictionary?, why: NSString?, err: NSString?
         guard let av = HCFindAVService(d, &attrs, &err)?.takeRetainedValue() else {
             NSLog("HDR Switch: %@", (err as String?) ?? "no DDC connection")
             return .unreachable
         }
-        guard let live = HCReadIdentityValues(av, attrs as? [AnyHashable: Any], &why) else {
-            NSLog("HDR Switch: %@", (why as String?) ?? "couldn't read the monitor's identity")
-            return .unreachable
+        var entry: [AnyHashable: Any]?
+        if readOnly, let hash = knownHash { entry = HCLoadDB(&err)?[hash] as? [AnyHashable: Any] }
+        if entry == nil {
+            guard let live = HCReadIdentityValues(av, attrs as? [AnyHashable: Any], &why) else {
+                NSLog("HDR Switch: %@", (why as String?) ?? "couldn't read the monitor's identity")
+                return .unreachable
+            }
+            knownHash = HCSHA256Hex(HCIdentityJSON(live))
+            entry = HCFindMonitorForIdentity(live, &why, &err)
         }
-        guard let entry = HCFindMonitorForIdentity(live, uuid, &why, &err) else {
+        guard let found = entry else {
             NSLog("HDR Switch: monitor unknown: %@", ((err ?? why) as String?) ?? "")
             return .unsupported
         }
         var levels: NSDictionary?
-        let code = HCLocalDimming(entry, &levels, &err)
+        let code = HCLocalDimming(found, &levels, &err)
         guard code >= 0, let named = levels as? [String: NSNumber] else {
             NSLog("HDR Switch: %@", (err as String?) ?? "bad local dimming entry")
             return .unsupported

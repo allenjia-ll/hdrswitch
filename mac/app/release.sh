@@ -32,7 +32,7 @@ rm -rf "$STAGE" "$DIST/$NAME.dmg"
 mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/HDR Switch.app"   # ditto keeps the bundle and its signature intact
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "HDR Switch $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DIST/$NAME.dmg" >/dev/null
+diskutil image create from --format UDZO --volumeName "HDR Switch $VERSION" "$STAGE" "$DIST/$NAME.dmg" >/dev/null
 rm -rf "$STAGE"
 (cd "$DIST" && shasum -a 256 "$NAME.dmg" > "$NAME.dmg.sha256")
 

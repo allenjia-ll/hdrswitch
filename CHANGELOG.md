@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-31
+
+The PKG now always installs `hdrctl`, so it can't fall behind the app, and the DMG is built with
+`diskutil image create`. Windows is unchanged since 0.1.7-win and no new Windows binary ships here.
+
 ### Changed
 
+- `mac/app/release.sh` builds the DMG with `diskutil image create` instead of the deprecated `hdiutil create`. The format is unchanged (UDZO).
 - The PKG always installs `hdrctl`, so it stays the same version as the app. The setup screen and its checkbox are gone, along with the message saying where `hdrctl` went; the installer's last screen says so instead.
 
 ## [0.3.2] - 2026-10-31
@@ -208,7 +214,8 @@ unchanged since 0.1.6 and no new macOS binary ships here.
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/allenjia-ll/hdrswitch/compare/v0.2.1...v0.3.1
 [0.2.1]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.8-mac...v0.2.1

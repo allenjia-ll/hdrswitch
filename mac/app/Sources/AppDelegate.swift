@@ -32,7 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.target = self
             button.action = #selector(togglePopup(_:))
         }
-        panel = PopupPanel(content: PopupView(displays: displays, openSettings: { [weak self] in self?.openSettings() }))
+        panel = PopupPanel(content: PopupView(displays: displays, openSettings: { [weak self] in self?.openSettings() },
+                                              openAbout: { [weak self] in self?.openAbout() }))
         // The popup's height changes with its contents (e.g. a warning, or another monitor), so refit it
         // after each change.
         modelChanges = displays.objectWillChange.sink { [weak self] _ in
@@ -104,6 +105,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)   // a menu bar app isn't active by default
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    // macOS's standard About panel: the name, icon, version and copyright come from Info.plist.
+    private func openAbout() {
+        closePopup()
+        let credits = NSMutableAttributedString(
+            string: "An unofficial tool, not affiliated with or endorsed by any monitor's manufacturer or Apple. MIT License.\n\n",
+            attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
+        let link = "https://github.com/allenjia-ll/hdrswitch"
+        credits.append(NSAttributedString(string: link, attributes: [.font: NSFont.systemFont(ofSize: 11), .link: link]))
+        NSApp.activate(ignoringOtherApps: true)   // a menu bar app isn't active by default
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
     }
 
     // Detect Monitor, from Settings, for the monitor Settings shows. A new run each time, unless one is open.

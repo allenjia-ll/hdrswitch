@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Menu bar app: **About HDR Switch** in the panel, under Settings, opens the standard About window with the version, copyright, and a link to the project.
+
 ### Changed
 
 - The PKG installs for the current user, with no password: the app in `~/Applications` and, if chosen, `hdrctl` in `~/.local/bin`, with a message saying where it went. Uninstalling needs no password either.
+- The PKG no longer opens the app when it finishes: you open it yourself. It still quits a running copy.
 
 ### Fixed
 

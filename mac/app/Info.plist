@@ -20,6 +20,8 @@
 	<string>12.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Allen Jia</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

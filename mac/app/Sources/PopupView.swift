@@ -8,7 +8,9 @@ import SwiftUI
 struct PopupView: View {
     @ObservedObject var displays: DisplayList
     let openSettings: () -> Void
+    let openAbout: () -> Void
     private let settingsRowHover = HoverState()
+    private let aboutRowHover = HoverState()
     private let quitRowHover = HoverState()
     @Environment(\.colorScheme) private var colorScheme
 
@@ -30,9 +32,11 @@ struct PopupView: View {
             Divider()
                 .padding(.top, 12)
                 .padding(.bottom, 6)
-            // As in the design: "⚙ Settings…", a divider, then "Quit HDR Switch". The rows' text lines up
-            // with the title, and their hover highlight extends past it.
+            // As in the design: "⚙ Settings…", "About HDR Switch", a divider, then "Quit HDR Switch". The
+            // rows' text lines up with the title, and their hover highlight extends past it.
             MenuRow(title: "Settings…", systemImage: "gearshape", hover: settingsRowHover, action: openSettings)
+                .padding(.horizontal, -8)
+            MenuRow(title: "About HDR Switch", systemImage: "info.circle", hover: aboutRowHover, action: openAbout)
                 .padding(.horizontal, -8)
             Divider()
                 .padding(.vertical, 6)
@@ -380,6 +384,7 @@ struct MenuRow: View {
             HStack(spacing: 7) {
                 if let systemImage = systemImage {
                     Image(systemName: systemImage)
+                        .frame(width: 16)   // so the rows' text lines up
                 }
                 Text(title)
             }

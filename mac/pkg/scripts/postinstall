@@ -1,7 +1,5 @@
 #!/bin/sh
-# Restarts the app, so the new version runs and checks the monitor. The package installs for the current
-# user, and this runs as that user.
-app="$HOME/Applications/HDR Switch.app"
-pkill -f "^$app/Contents/MacOS/HDRSwitch"
-open "$app"
+# Quits a running copy, so the new version is what runs next. The user opens the app themselves. The
+# package installs for the current user, and this runs as that user.
+pkill -f "^$HOME/Applications/HDR Switch.app/Contents/MacOS/HDRSwitch"
 exit 0

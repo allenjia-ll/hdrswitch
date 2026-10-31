@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-31
+
+The PKG now installs for the current user with no password, and uninstalling needs none either. The app
+has an About window and a one-time welcome. This is the first published release since 0.2.1: 0.3.1 was
+tagged but never released, so its changes reach you here. Where the two differ, this section wins.
+Windows is unchanged since 0.1.7-win and no new Windows binary ships here.
+
 ### Added
 
 - Menu bar app: the first time it's opened, a short welcome says it's in the menu bar and that it's an unofficial tool. Deleting your data when uninstalling shows it again on the next install.
@@ -197,7 +204,8 @@ unchanged since 0.1.6 and no new macOS binary ships here.
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/allenjia-ll/hdrswitch/compare/v0.2.1...v0.3.1
 [0.2.1]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.8-mac...v0.2.1
 [0.1.8-mac]: https://github.com/allenjia-ll/hdrswitch/compare/v0.1.7-win...v0.1.8-mac

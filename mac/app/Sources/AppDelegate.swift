@@ -50,7 +50,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Clicking another app's window activates that app; close the popup then.
         NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification,
                                                object: nil, queue: .main) { [weak self] _ in self?.closePopup() }
-        displays.refresh()   // finds out now whether a monitor is unsupported, without waiting for a click
+        // After launching finishes, so the menu bar icon the welcome points to is there.
+        DispatchQueue.main.async { [weak self] in
+            self?.welcomeOnFirstRun()
+            self?.displays.refresh()   // finds out now whether a monitor is unsupported, without waiting for a click
+        }
+    }
+
+    // The app has no window or Dock icon, so the first time it's opened it looks like nothing happened.
+    private func welcomeOnFirstRun() {
+        let key = "welcomeShown"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        let alert = NSAlert()
+        alert.messageText = "HDR Switch is running"
+        alert.informativeText = "Click its icon in the menu bar to switch HDR and adjust your monitor.\n\n"
+            + "HDR Switch is an unofficial tool that changes monitor settings directly. Use it at your own risk."
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     // The first time a monitor turns out not to be in the database, says so and where to add it.

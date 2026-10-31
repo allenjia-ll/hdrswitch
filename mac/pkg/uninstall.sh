@@ -22,6 +22,7 @@ esac
 
 if [ "$delete_data" = yes ]; then
     rm -rf "$HOME/Library/Application Support/HDR Switch"
+    defaults delete io.github.allenjia-ll.hdrswitch >/dev/null 2>&1   # so a new install starts fresh
 fi
 
 # Only the link the installer made: one of your own, such as to a build folder, stays.

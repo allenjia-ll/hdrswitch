@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Menu bar app: the first time it's opened, a short welcome says it's in the menu bar and that it's an unofficial tool. Deleting your data when uninstalling shows it again on the next install.
 - Menu bar app: **About HDR Switch** in the panel, under Settings, opens the standard About window with what the app does, a short disclaimer, the version, copyright, and a link to the project.
 
 ### Changed

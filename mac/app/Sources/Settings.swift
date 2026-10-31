@@ -9,15 +9,15 @@ struct SettingRule: Equatable {
     var value: String
 }
 
-// Saved per user in the app's preferences, for each monitor by its display UUID. The defaults are
-// what hdrctl on/off do. Local dimming levels are stored by their monitor_db.json name ("off", "standard").
+// Saved in settings.json in the data folder, for each monitor by its display UUID (see hdrcore.h). The
+// defaults are what hdrctl on/off do. Local dimming levels are stored by their monitor_db.json name
+// ("off", "standard").
 enum Preferences {
-    enum Rule {
+    enum Rule: CaseIterable {
         case onProfile, offProfile, onDimming, offDimming
 
-        // Keys: <UUID>.hdrOnSetProfile / <UUID>.hdrOnProfile, …SetDimming / …Dimming, and the same for hdrOff.
-        fileprivate var state: String { self == .onProfile || self == .onDimming ? "hdrOn" : "hdrOff" }
-        fileprivate var what: String { self == .onProfile || self == .offProfile ? "Profile" : "Dimming" }
+        fileprivate var state: String { self == .onProfile || self == .onDimming ? "hdr_on" : "hdr_off" }
+        fileprivate var what: String { self == .onProfile || self == .offProfile ? "color_profile" : "local_dimming" }
         fileprivate var fallback: SettingRule {
             switch self {
             case .onProfile: return SettingRule(enabled: true, value: "Rec. ITU-R BT.2020-1")
@@ -26,22 +26,63 @@ enum Preferences {
             case .offDimming: return SettingRule(enabled: true, value: "off")
             }
         }
+        // The keys these settings had in the app's preferences up to 0.2.1.
+        fileprivate var oldKeys: (enabled: String, value: String) {
+            let state = self.state == "hdr_on" ? "hdrOn" : "hdrOff"
+            let what = self.what == "color_profile" ? "Profile" : "Dimming"
+            return (state + "Set" + what, state + what)
+        }
     }
 
-    // A monitor without its own settings gets those saved without a UUID, which held the one
-    // monitor's settings up to 0.2.1, then the defaults.
     static func get(_ rule: Rule, uuid: String) -> SettingRule {
         if uuid == FakeMonitor.uuid, let value = fakeRules[rule] { return value }
-        let d = UserDefaults.standard
-        func value<T>(_ key: String) -> T? { d.object(forKey: uuid + "." + key) as? T ?? d.object(forKey: key) as? T }
-        return SettingRule(enabled: value(rule.state + "Set" + rule.what) ?? rule.fallback.enabled,
-                           value: value(rule.state + rule.what) ?? rule.fallback.value)
+        var err: NSString?
+        let monitor = HCLoadSettings(&err)?[uuid] as? [String: Any]
+        let saved = (monitor?[rule.state] as? [String: Any])?[rule.what] as? [String: Any]
+        return SettingRule(enabled: saved?["set"] as? Bool ?? rule.fallback.enabled,
+                           value: saved?["value"] as? String ?? rule.fallback.value)
     }
 
     static func set(_ rule: Rule, uuid: String, _ value: SettingRule) {
         if uuid == FakeMonitor.uuid { fakeRules[rule] = value; return }
-        UserDefaults.standard.set(value.enabled, forKey: uuid + "." + rule.state + "Set" + rule.what)
-        UserDefaults.standard.set(value.value, forKey: uuid + "." + rule.state + rule.what)
+        var rules = Dictionary(uniqueKeysWithValues: Rule.allCases.map { ($0, get($0, uuid: uuid)) })
+        rules[rule] = value
+        save(rules, uuid: uuid)
+    }
+
+    @discardableResult
+    private static func save(_ rules: [Rule: SettingRule], uuid: String) -> Bool {
+        var monitor: [String: [String: Any]] = [:]
+        for (rule, value) in rules {
+            monitor[rule.state, default: [:]][rule.what] = ["set": value.enabled, "value": value.value]
+        }
+        var err: NSString?
+        if HCSaveMonitorSettings(uuid, monitor, &err) { return true }
+        NSLog("HDR Switch: %@", (err as String?) ?? "couldn't save settings.json")
+        return false
+    }
+
+    // Up to 0.2.1 settings were in the app's preferences, as <UUID>.hdrOnProfile etc., and without the
+    // UUID for monitors with none of their own. Once, when there's a monitor to give them to, moves
+    // them to settings.json: for these monitors and any named in the keys.
+    static func moveFromAppPreferences(connected: [String]) {
+        let d = UserDefaults.standard
+        guard !connected.isEmpty, let path = HCSettingsPath(), !FileManager.default.fileExists(atPath: path),
+              let id = Bundle.main.bundleIdentifier, let old = d.persistentDomain(forName: id) else { return }
+        let names = Rule.allCases.flatMap { [$0.oldKeys.enabled, $0.oldKeys.value] }
+        let ours = old.keys.filter { key in names.contains { key == $0 || key.hasSuffix("." + $0) } }
+        guard !ours.isEmpty else { return }
+        let named = ours.filter { $0.contains(".") }.compactMap { $0.split(separator: ".").first.map(String.init) }
+        for uuid in Set(connected + named) {
+            var rules: [Rule: SettingRule] = [:]
+            for rule in Rule.allCases {
+                let keys = rule.oldKeys
+                rules[rule] = SettingRule(enabled: d.object(forKey: uuid + "." + keys.enabled) as? Bool ?? d.object(forKey: keys.enabled) as? Bool ?? rule.fallback.enabled,
+                                          value: d.string(forKey: uuid + "." + keys.value) ?? d.string(forKey: keys.value) ?? rule.fallback.value)
+            }
+            if !save(rules, uuid: uuid) { return }   // keep the old keys, to try again
+        }
+        ours.forEach { d.removeObject(forKey: $0) }
     }
 
     private static var fakeRules: [Rule: SettingRule] = [:]   // the fake monitor's, for this launch only
@@ -73,7 +114,7 @@ final class SettingsModel: ObservableObject {
 
     init(displays: DisplayList) { self.displays = displays }
 
-    var selectedTitle: String { monitors.first { $0.uuid == selected }?.title ?? "No monitor" }
+    var selectedTitle: String { monitors.first { $0.uuid == selected }?.title ?? "" }
 
     // Shows the saved settings, for the same monitor as before if it's still listed.
     func reload() {
@@ -191,63 +232,70 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // The settings below are for this monitor; with more than one, a menu chooses it.
-            if model.monitors.count > 1 {
-                HStack {
-                    Text("Monitor")
+            if model.selected.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No external display connected")   // as in the popup
                         .font(.system(size: 13, weight: .bold))
-                    Spacer()
-                    Dropdown(options: model.monitors.map { $0.title }, selection: model.selectedTitle,
-                             select: { title in
-                                 if let m = model.monitors.first(where: { $0.title == title }) { model.select(m.uuid) }
-                             })
+                    Text("Connect a monitor to choose its settings.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                 }
             } else {
-                Text(model.selectedTitle)
-                    .font(.system(size: 13, weight: .bold))
-            }
-            Group {
+                // The settings below are for this monitor; with more than one, a menu chooses it.
+                if model.monitors.count > 1 {
+                    HStack {
+                        Text("Monitor")
+                            .font(.system(size: 13, weight: .bold))
+                        Spacer()
+                        Dropdown(options: model.monitors.map { $0.title }, selection: model.selectedTitle,
+                                 select: { title in
+                                     if let m = model.monitors.first(where: { $0.title == title }) { model.select(m.uuid) }
+                                 })
+                    }
+                } else {
+                    Text(model.selectedTitle)
+                        .font(.system(size: 13, weight: .bold))
+                }
                 Section(title: "When HDR is turned on", profile: $model.onProfile, dimming: $model.onDimming, model: model)
                 Section(title: "When HDR is turned off", profile: $model.offProfile, dimming: $model.offDimming, model: model)
+                if model.levels.isEmpty {
+                    Text("Local dimming isn't available: this monitor isn't supported, or it didn't answer. To add it, use Detect Monitor below.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .disabled(model.selected.isEmpty)
-            if model.selected.isEmpty {
-                Text("Connect a monitor to choose its settings.")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            } else if model.levels.isEmpty {
-                Text("Local dimming isn't available: this monitor isn't supported, or it didn't answer. To add it, use Detect Monitor below.")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Monitor detection")
-                    .font(.system(size: 13, weight: .bold))
-                Panel {
-                    HStack(alignment: .center) {
-                        Text("Find your monitor's local dimming setting and its levels, and save them to local_monitor_db.json. Run this again after updating the monitor's firmware.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                        Button("Detect Monitor…", action: detect)
-                            .disabled(model.selected.isEmpty)
-                    }
-                    // Only when there's a local_monitor_db.json. The window refits when this appears or goes.
-                    if model.hasDetected {
-                        Divider().padding(.vertical, 6)
-                        HStack {
-                            Spacer()
-                            Button("View Detected Monitor…", action: viewDetected)
-                            Button("Delete Detected Monitor…", action: clearDetected)
+            // Detect needs a connected monitor; View and Delete need a local_monitor_db.json.
+            if !model.selected.isEmpty || model.hasDetected {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Monitor detection")
+                        .font(.system(size: 13, weight: .bold))
+                    Panel {
+                        if !model.selected.isEmpty {
+                            HStack(alignment: .center) {
+                                Text("Find your monitor's local dimming setting and its levels, and save them to local_monitor_db.json. Run this again after updating the monitor's firmware.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                                Button("Detect Monitor…", action: detect)
+                            }
+                        }
+                        // The window refits when these appear or go.
+                        if model.hasDetected {
+                            if !model.selected.isEmpty { Divider().padding(.vertical, 6) }
+                            HStack {
+                                Spacer()
+                                Button("View Detected Monitor…", action: viewDetected)
+                                Button("Delete Detected Monitor…", action: clearDetected)
+                            }
                         }
                     }
                 }
             }
         }
         .padding(20)
-        .frame(width: 440)
+        .frame(width: 440, alignment: .leading)
     }
 
     private struct Section: View {

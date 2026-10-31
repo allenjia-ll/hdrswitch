@@ -30,6 +30,7 @@ final class DisplayList: ObservableObject {
             return old[uuid] ?? MonitorModel(uuid: uuid, name: d["name"] as? String ?? "Display")
         }
         if let name = FakeMonitor.name { monitors.append(old[FakeMonitor.uuid] ?? MonitorModel(uuid: FakeMonitor.uuid, name: name)) }
+        Preferences.moveFromAppPreferences(connected: monitors.map { $0.uuid }.filter { $0 != FakeMonitor.uuid })
         // A change in any monitor is a change in the list (the popup refits to it).
         changes = monitors.map { $0.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() } }
         monitors.forEach { $0.refresh() }

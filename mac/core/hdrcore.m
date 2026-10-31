@@ -655,6 +655,24 @@ BOOL HCSetDimming(IOAVServiceRef av, uint8_t code, uint16_t value, NSString *lab
     return NO;
 }
 
+// ---------------------------------------------------------------- settings --
+
+NSString *HCSettingsPath(void) { return dataPath(@"settings.json"); }
+
+NSDictionary *HCLoadSettings(NSString **error) { return loadJSONObject(HCSettingsPath(), error); }
+
+BOOL HCSaveMonitorSettings(NSString *uuid, NSDictionary *settings, NSString **error) {
+    NSDictionary *saved = HCLoadSettings(error);   // a damaged file is reported, not overwritten
+    if (!saved) return NO;
+    NSMutableDictionary *all = [saved mutableCopy];
+    all[uuid] = settings;
+    NSError *err = nil;
+    NSString *path = HCSettingsPath();
+    if (![[HCPrettyJSON(all) stringByAppendingString:@"\n"] writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err])
+        return fail(error, @"couldn't write %@: %@", path, err.localizedDescription);
+    return YES;
+}
+
 // -------------------------------------------------------------- detection --
 
 NSDictionary<NSNumber *, NSArray<NSNumber *> *> *HCDDCScan(IOAVServiceRef av, NSArray<NSNumber *> *codes,

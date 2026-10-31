@@ -86,7 +86,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Detect Monitor, from Settings, for the monitor Settings shows. A new run each time, unless one is open.
     private func openDetection() {
         if detectionWindow?.isVisible != true {
-            guard !settings.selected.isEmpty else { return }
             let model = DetectionModel(uuid: settings.selected, name: settings.selectedTitle,
                                        onSaved: { [weak self] in self?.detectedMonitorsChanged() })
             detectionWindow = makeTranslucentWindow(title: "Detect Monitor",

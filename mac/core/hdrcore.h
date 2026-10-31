@@ -17,7 +17,7 @@ typedef NS_ENUM(NSInteger, HCLogLevel) { HCLogInfo, HCLogWarning };
 void HCSetLogger(void (^logger)(HCLogLevel level, NSString *message));
 
 // -------------------------------------------------------------- data files --
-// local_monitor_db.json lives in the data folder, shared by the CLI and the app:
+// local_monitor_db.json and settings.json live in the data folder, shared by the CLI and the app:
 // ~/Library/Application Support/HDR Switch (created if needed), unless set here (tests).
 void HCSetDataDirectory(NSString *dir);
 NSString *HCDataDirectory(void);
@@ -107,6 +107,17 @@ NSString *HCLevelName(NSDictionary<NSString *, NSNumber *> *levels, uint16_t val
 // Writes local dimming, reads it back and retries while the monitor is busy. Skips the write if
 // it's already set. Returns NO (with a warning logged) if it couldn't be confirmed.
 BOOL HCSetDimming(IOAVServiceRef av, uint8_t code, uint16_t value, NSString *label);
+
+// ---------------------------------------------------------------- settings --
+// settings.json holds what the menu bar app's HDR switch sets, for each monitor by display UUID:
+//   { "<display UUID>": { "hdr_on":  { "color_profile": { "set": true, "value": "Rec. ITU-R BT.2020-1" },
+//                                      "local_dimming": { "set": true, "value": "standard" } },
+//                         "hdr_off": { ... } }, ... }
+// "set": false leaves that setting alone. Local dimming values are monitor_db.json level names.
+NSString *HCSettingsPath(void);
+NSDictionary *HCLoadSettings(NSString **error);   // @{} if it doesn't exist, nil with *error set if invalid
+// Adds (or replaces) this monitor's settings, keeping the file's other monitors.
+BOOL HCSaveMonitorSettings(NSString *uuid, NSDictionary *settings, NSString **error);
 
 // -------------------------------------------------------------- detection --
 // Finding a monitor's local dimming code: scan every VCP code at each level the user sets in the

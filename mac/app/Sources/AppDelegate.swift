@@ -262,6 +262,12 @@ final class PopupPanel: NSPanel {
 
     override func cancelOperation(_ sender: Any?) { orderOut(nil) }   // Esc
 
+    // A note showing in a popover goes with the panel: the mouse never "leaves" a hidden panel.
+    override func orderOut(_ sender: Any?) {
+        childWindows?.forEach { $0.orderOut(nil) }
+        super.orderOut(sender)
+    }
+
     // Left edge under the menu bar item, kept on screen, 6 pt below the menu bar.
     func show(below item: NSRect) {
         guard let content = contentView else { return }

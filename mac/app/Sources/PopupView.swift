@@ -70,11 +70,11 @@ struct MonitorSection: View {
                 Text(model.name)
                     .font(.system(size: 13, weight: .bold))
                 if model.support == .unsupported {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.orange)
-                        .help("This monitor isn't supported. HDR Switch will only switch HDR and the color "
-                              + "profile, and won't touch the monitor's local dimming setting.")
+                    HoverNote(systemImage: "exclamationmark.circle.fill", color: .systemOrange,
+                              text: "This monitor isn't supported yet. HDR Switch will only switch HDR and the color "
+                                  + "profile, and won't touch local dimming or brightness. To add it, open Settings "
+                                  + "and choose Detect Monitor.")
+                        .frame(width: 14, height: 14)
                 }
                 Spacer()
                 if model.busy || refresh != nil {
@@ -120,6 +120,57 @@ struct MonitorSection: View {
                 .padding(.top, 10)
             }
         }
+    }
+}
+
+// An icon that shows a note in a popover as soon as the mouse is over it. Not .help: tooltips wait a
+// moment, and need the app to be active, which macOS doesn't always allow a menu bar app.
+struct HoverNote: NSViewRepresentable {
+    let systemImage: String
+    let color: NSColor
+    let text: String
+
+    func makeNSView(context: Context) -> NoteView { NoteView(systemImage: systemImage, color: color) }
+    func updateNSView(_ view: NoteView, context: Context) { view.text = text }
+
+    final class NoteView: NSView {
+        var text = ""
+        private let popover = NSPopover()
+
+        init(systemImage: String, color: NSColor) {
+            super.init(frame: .zero)
+            let icon = NSImageView(image: NSImage(systemSymbolName: systemImage, accessibilityDescription: nil) ?? NSImage())
+            icon.symbolConfiguration = .init(pointSize: 12, weight: .regular)
+            icon.contentTintColor = color
+            icon.autoresizingMask = [.width, .height]
+            icon.frame = bounds
+            addSubview(icon)
+            popover.animates = false
+        }
+        required init?(coder: NSCoder) { fatalError("not used") }
+
+        // Always active, as in Dropdown.ButtonView.
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited],
+                                           owner: self))
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            let label = NSTextField(wrappingLabelWithString: text)
+            label.font = .systemFont(ofSize: 12)
+            label.preferredMaxLayoutWidth = 240
+            let size = label.fittingSize
+            let holder = NSViewController()
+            holder.view = NSView(frame: NSRect(x: 0, y: 0, width: size.width + 20, height: size.height + 16))
+            label.frame = NSRect(x: 10, y: 8, width: size.width, height: size.height)
+            holder.view.addSubview(label)
+            popover.contentViewController = holder
+            popover.contentSize = holder.view.frame.size
+            popover.show(relativeTo: bounds, of: self, preferredEdge: .minY)   // the panel is under the menu bar
+        }
+        override func mouseExited(with event: NSEvent) { popover.close() }
     }
 }
 

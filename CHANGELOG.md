@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Menu bar app: the note on an unsupported monitor's warning mark appears as soon as the mouse is over it, and works when the app isn't active.
 - Menu bar app: Tab and Shift+Tab move between the text fields in Detect Monitor.
 
 ## [0.3.4] - 2026-10-31

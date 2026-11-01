@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-11-01
+
+Small fixes to Detect Monitor and the warning for an unsupported monitor. Windows is unchanged since
+0.1.7-win and no new Windows binary ships here.
+
 ### Changed
 
 - Menu bar app: pressing Esc during Detect Monitor asks before stopping.
@@ -232,7 +237,8 @@ unchanged since 0.1.6 and no new macOS binary ships here.
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.1...v0.3.2

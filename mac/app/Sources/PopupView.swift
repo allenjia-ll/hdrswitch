@@ -1,6 +1,6 @@
 // The popup's contents, laid out like Control Center's Displays popup: for each external monitor, its
 // name, an HDR switch and the color profile and local dimming dropdowns (a refresh button by the
-// first name refreshes them all); then a divider, and Settings and Quit rows.
+// first name refreshes them all); then a divider, and Settings, About and Quit rows.
 
 import AppKit
 import SwiftUI
@@ -32,15 +32,15 @@ struct PopupView: View {
             Divider()
                 .padding(.top, 12)
                 .padding(.bottom, 6)
-            // As in the design: "⚙ Settings…", "About HDR Switch", a divider, then "Quit HDR Switch". The
-            // rows' text lines up with the title, and their hover highlight extends past it.
-            MenuRow(title: "Settings…", systemImage: "gearshape", hover: settingsRowHover, action: openSettings)
-                .padding(.horizontal, -8)
-            MenuRow(title: "About HDR Switch", systemImage: "info.circle", hover: aboutRowHover, action: openAbout)
+            // Settings, a divider, then About and Quit, which are about the app itself. The rows' text lines
+            // up with the title, and their hover highlight extends past it.
+            MenuRow(title: "Settings…", hover: settingsRowHover, action: openSettings)
                 .padding(.horizontal, -8)
             Divider()
                 .padding(.vertical, 6)
-            MenuRow(title: "Quit HDR Switch", hover: quitRowHover) { NSApp.terminate(nil) }
+            MenuRow(title: "About", hover: aboutRowHover, action: openAbout)
+                .padding(.horizontal, -8)
+            MenuRow(title: "Quit", hover: quitRowHover, enabled: displays.quitAllowed) { NSApp.terminate(nil) }
                 .padding(.horizontal, -8)
         }
         .padding(.horizontal, 16)
@@ -423,31 +423,27 @@ final class HoverState: ObservableObject {
     @Published var hovering = false
 }
 
-// A menu-style row that highlights on hover, like "Display Settings…", with an optional icon in front.
+// A menu-style row that highlights on hover, like "Display Settings…".
 struct MenuRow: View {
     let title: String
-    var systemImage: String? = nil
     @ObservedObject var hover: HoverState
+    var enabled = true
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
-                if let systemImage = systemImage {
-                    Image(systemName: systemImage)
-                        .frame(width: 16)   // so the rows' text lines up
-                }
-                Text(title)
-            }
+            Text(title)
                 .font(.system(size: 13))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(hover.hovering ? Color.primary.opacity(0.1) : Color.clear))
+                                .fill(hover.hovering && enabled ? Color.primary.opacity(0.1) : Color.clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
         .onHover { hover.hovering = $0 }
     }
 }

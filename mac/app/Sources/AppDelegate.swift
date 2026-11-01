@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var outsideClickMonitor: Any?
     private var modelChanges: AnyCancellable?
     private var settingsChanges: AnyCancellable?
+    private var detectionChanges: AnyCancellable?
     private let displays = DisplayList()
     private lazy var settings = SettingsModel(displays: displays)
 
@@ -161,6 +162,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 alert.addButton(withTitle: "Keep Going")   // first, so Return is the safe choice
                 alert.addButton(withTitle: "Stop")
                 return alert.runModal() == .alertSecondButtonReturn
+            }
+            // Quit is off while a detection is partway through, and on again when its window closes.
+            detectionChanges = model.objectWillChange.sink { [weak self, weak model] _ in
+                DispatchQueue.main.async {
+                    guard let self = self, let model = model else { return }
+                    self.displays.detecting = self.detectionWindow?.isVisible == true && model.inProgress
+                }
+            }
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
+                                                   queue: .main) { [weak self] _ in
+                self?.detectionChanges = nil
+                self?.displays.detecting = false
             }
             detectionWindow = window
             model.start()

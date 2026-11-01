@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Menu bar app: **Quit** is grayed out during a change to a monitor and while Detect Monitor is partway through. After 30 seconds, a stuck change no longer blocks it.
+- Menu bar app: the panel's last rows are text only: **Settings…**, a divider, then **About** and **Quit** together, without the app's name.
+
 ## [0.3.5] - 2026-11-01
 
 Small fixes to Detect Monitor and the warning for an unsupported monitor. Windows is unchanged since

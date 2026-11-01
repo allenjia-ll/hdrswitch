@@ -210,8 +210,8 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 ```sh
 mac/release.sh 0.1.2        # the CLI: dist/hdrswitch-0.1.2-macos-arm64.zip and its SHA-256
-mac/app/release.sh 0.3.5    # the menu bar app: dist/hdrswitch-0.3.5-macos-arm64.dmg and its SHA-256
-mac/release-pkg.sh 0.3.5    # the installer: dist/hdrswitch-0.3.5-macos-arm64.pkg and its SHA-256
+mac/app/release.sh 0.3.6    # the menu bar app: dist/hdrswitch-0.3.6-macos-arm64.dmg and its SHA-256
+mac/release-pkg.sh 0.3.6    # the installer: dist/hdrswitch-0.3.6-macos-arm64.pkg and its SHA-256
 ```
 
 The DMG holds `HDR Switch.app` next to an Applications shortcut to drag it onto. The script sets the app's version from the argument, re-signs it (ad hoc), and checks it's arm64, targets macOS 12, has a valid signature and includes `monitor_db.json`.

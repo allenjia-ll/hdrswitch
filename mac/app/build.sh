@@ -29,6 +29,10 @@ cp ../../monitor_db.json "$APP/Contents/Resources/"   # local_monitor_db.json is
 VERSION="${HDRSWITCH_VERSION:-$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' ../../CHANGELOG.md | head -1)}"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
 
+# The commit About shows, -dirty if there are uncommitted changes. None outside a git checkout.
+COMMIT="$(git describe --always --abbrev=8 --dirty --exclude='*' 2>/dev/null || true)"
+/usr/libexec/PlistBuddy -c "Add :HDRSwitchCommit string $COMMIT" "$APP/Contents/Info.plist"
+
 codesign --force --sign - "$APP"   # ad-hoc, required to run on Apple Silicon
 
 echo "Built $(pwd)/$APP"

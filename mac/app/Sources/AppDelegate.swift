@@ -11,9 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var detectionWindow: NSWindow?
     private var detectedWindow: NSWindow?
     private var uninstallWindow: NSWindow?
+    private var aboutWindow: NSWindow?
     private var outsideClickMonitor: Any?
     private var modelChanges: AnyCancellable?
     private var settingsChanges: AnyCancellable?
+    private var detectionChanges: AnyCancellable?
     private let displays = DisplayList()
     private lazy var settings = SettingsModel(displays: displays)
 
@@ -125,23 +127,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    // macOS's standard About panel: the name, icon, version and copyright come from Info.plist.
     private func openAbout() {
         closePopup()
-        let center = NSMutableParagraphStyle()
-        center.alignment = .center
-        let text = "Switches HDR on your external monitors in one click, along with the color profile, local dimming "
-            + "and brightness you choose in Settings.\n\n"
-            + "An unofficial tool, not affiliated with or endorsed by Apple or any monitor's manufacturer. It changes "
-            + "monitor settings using private macOS APIs and DDC/CI. Use it at your own risk.\n\n"
-        let credits = NSMutableAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: center])
-        let link = "https://github.com/allenjia-ll/hdrswitch"
-        credits.append(NSAttributedString(string: link, attributes: [.font: NSFont.systemFont(ofSize: 11), .link: link,
-                                                                     .paragraphStyle: center]))
+        if aboutWindow?.isVisible != true {
+            aboutWindow = makeTranslucentWindow(title: "About HDR Switch", content: AboutView())
+        }
         NSApp.activate(ignoringOtherApps: true)   // a menu bar app isn't active by default
-        // No build number: it would show in brackets after the version.
-        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits, .version: ""])
+        aboutWindow?.makeKeyAndOrderFront(nil)
     }
 
     // Detect Monitor, from Settings, for the monitor Settings shows. A new run each time, unless one is open.
@@ -161,6 +153,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 alert.addButton(withTitle: "Keep Going")   // first, so Return is the safe choice
                 alert.addButton(withTitle: "Stop")
                 return alert.runModal() == .alertSecondButtonReturn
+            }
+            // Quit is off while a detection is partway through, and on again when its window closes.
+            detectionChanges = model.objectWillChange.sink { [weak self, weak model] _ in
+                DispatchQueue.main.async {
+                    guard let self = self, let model = model else { return }
+                    self.displays.detecting = self.detectionWindow?.isVisible == true && model.inProgress
+                }
+            }
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
+                                                   queue: .main) { [weak self] _ in
+                self?.detectionChanges = nil
+                self?.displays.detecting = false
             }
             detectionWindow = window
             model.start()

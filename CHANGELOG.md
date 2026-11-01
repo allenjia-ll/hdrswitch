@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-01
+
+A cleaner panel and About window, and Quit can no longer interrupt a change or a detection. Windows is
+unchanged since 0.1.7-win and no new Windows binary ships here.
+
+### Changed
+
+- Menu bar app: About shows the commit the app was built from, with the version and commit linking to GitHub.
+- Menu bar app: About is a window of its own, styled like the others, instead of macOS's standard panel, whose text box showed a scrollbar even with nothing to scroll.
+- Menu bar app: **Quit** is grayed out during a change to a monitor and while Detect Monitor is partway through. After 30 seconds, a stuck change no longer blocks it.
+- Menu bar app: the panel's last rows are text only: **Settings…**, a divider, then **About** and **Quit** together, without the app's name.
+
 ## [0.3.5] - 2026-11-01
 
 Small fixes to Detect Monitor and the warning for an unsupported monitor. Windows is unchanged since
@@ -237,7 +249,8 @@ unchanged since 0.1.6 and no new macOS binary ships here.
 - `ddc set` limited to `0xF4` with values `0` or `2`.
 - `build.sh` to build `hdrctl` with the Xcode Command Line Tools.
 
-[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/allenjia-ll/hdrswitch/compare/v0.3.2...v0.3.3

@@ -19,7 +19,11 @@ enum FakeMonitor {
 // The connected external displays, one MonitorModel each, kept by display UUID.
 final class DisplayList: ObservableObject {
     @Published private(set) var monitors: [MonitorModel] = []
+    @Published var detecting = false   // Detect Monitor is open, partway through
     private var changes: [AnyCancellable] = []
+
+    // Quitting now would leave a change half done or lose a detection.
+    var quitAllowed: Bool { !detecting && !monitors.contains { $0.writing } }
 
     // Finds the external displays (NSScreen, so on the main thread) and re-reads each.
     func refresh() {
@@ -53,11 +57,13 @@ final class MonitorModel: ObservableObject {
     @Published var brightnessDraft: Double?                      // while the slider is being dragged
     @Published private(set) var switching = false                // HDR toggle running
     @Published private(set) var busy = false                     // any lookup or change running
+    @Published private(set) var writing = false                  // a change is running, not just a refresh
     @Published private(set) var warning: String?
 
     private var skyLightLoaded: Bool { Self.skyLightError == nil }
     private var profileURLs: [String: URL] = [:]
     private let work = ddcQueue
+    private var writeRun = 0                                     // tells this run's safety timeout from a later one's
     private var knownHash: String?   // the monitor's identity hash from its last identity read; only on `work`
 
     // Loaded once for all monitors: nil, or why HDR can't be switched.
@@ -202,6 +208,15 @@ final class MonitorModel: ObservableObject {
                      _ change: @escaping (Lookup) -> String?) {
         busy = true
         warning = nil
+        if !readOnly {
+            writing = true
+            writeRun += 1
+            let thisRun = writeRun
+            // A change always ends, as DDC calls time out, but Quit mustn't depend on that.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                if self.writeRun == thisRun { self.writing = false }
+            }
+        }
         work.async {
             HCDDCClearTimeout()
             let lookup = self.lookUpDimming(d, readOnly: readOnly)
@@ -213,6 +228,8 @@ final class MonitorModel: ObservableObject {
             }
             DispatchQueue.main.async {
                 self.busy = false
+                self.writing = false
+                self.writeRun += 1
                 self.switching = false
                 self.profileURLs = Dictionary(profiles, uniquingKeysWith: { a, _ in a })
                 self.profiles = profiles.map { $0.0 }

@@ -25,29 +25,37 @@ On Windows the color profile isn't changed yet; `on` and `off` do HDR and local 
 
 ## Supported monitors
 
-- **Local dimming** is currently supported only on the **KTC M27P6S**. It uses a vendor-specific setting, and the tool checks the monitor's identity before writing it (see [Safety checks](#safety-checks)).
-- **HDR switching and color profile selection** use macOS settings, not monitor settings, so they work on any display macOS supports them on. HDR needs a display that macOS reports as HDR-capable.
+| Feature | Works on |
+|---|---|
+| HDR on/off, color profile | Any display macOS supports them on. HDR needs a display that macOS reports as HDR-capable |
+| Local dimming, brightness | Monitors in the database, currently the **KTC M27P6S**, or ones you add with Detect Monitor |
 
-On other monitors, use the separate commands, since `on`, `off` and `toggle` include the M27P6S local dimming step and stop before changing anything if the monitor isn't an M27P6S:
+HDR and the color profile are macOS settings, so they work without the database. Local dimming and brightness are changed on the monitor over DDC/CI, and the app checks the monitor's identity before writing (see [Safety checks](#safety-checks)).
+
+### Add your monitor
+
+Is your monitor not listed? HDR and the color profile still work: the app tells you once, and leaves local dimming and brightness alone. To add them, click the menu bar icon, choose **Settings…**, then **Detect Monitor…**.
+
+It finds your monitor's local dimming setting over DDC/CI, if it has one. You need local dimming that you can change in the monitor's own menu, and not every monitor exposes it over DDC/CI. It walks you through setting each level in the menu while it reads the monitor (about a minute for the first level, less for the rest), then writes each level back so you can check it. Quit MonitorControl and other DDC apps first, and keep the monitor awake.
+
+The result is saved to `local_monitor_db.json` in `~/Library/Application Support/HDR Switch/`, and overrides the shipped entry for the same monitor. You can then contribute it in a pre-filled GitHub issue, so other owners of that model benefit.
+
+### From the command line
+
+`hdrctl detect` does the same as Detect Monitor:
+
+```sh
+hdrctl --display "<part of display name>" detect
+```
+
+On a monitor that isn't in the database, `on`, `off` and `toggle` stop before changing anything, so use the separate commands. Run `hdrctl list` to see display names.
 
 ```sh
 hdrctl --display "<part of display name>" hdr on
 hdrctl --display "<part of display name>" profile "Rec. ITU-R BT.2020-1"
 ```
 
-Run `hdrctl list` to see display names.
-
-### Add your monitor (macOS)
-
-If your monitor has local dimming that you can change in its own menu, `hdrctl detect` can find out how to control it over DDC/CI:
-
-```sh
-hdrctl --display "<part of display name>" detect
-```
-
-It asks how many local dimming levels the monitor's menu has and what they're called, then asks you to set each one in the menu while it reads every VCP code (about a minute for the first level, less for the rest). The code that changes with local dimming, and only that code, is the one it uses. Until then it only reads. After you confirm, it writes each level back so you can check it on the monitor, then asks which levels `on` and `off` should use. The result is saved to `local_monitor_db.json` in `~/Library/Application Support/HDR Switch/`, shared with the menu bar app (it overrides the shipped `monitor_db.json` entry for the same monitor), and it offers to open a pre-filled GitHub issue so the monitor can be added for everyone. Quit MonitorControl and other DDC apps first, and keep the monitor awake.
-
-On Windows the same applies, except that there is no `profile` command yet, so only the HDR step is available for other monitors:
+On Windows there's no `profile` command yet, so only the HDR step is available for other monitors:
 
 ```powershell
 hdrctl.exe --display "<part of display name>" hdr on

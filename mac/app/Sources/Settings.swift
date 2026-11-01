@@ -213,6 +213,7 @@ func makeTranslucentWindow<Content: View>(title: String, content: Content) -> Tr
     w.titlebarAppearsTransparent = true
     w.isMovableByWindowBackground = true
     w.isReleasedWhenClosed = false
+    w.autorecalculatesKeyViewLoop = true   // so Tab moves between fields as SwiftUI adds them
 
     let background = NSVisualEffectView()
     background.material = .popover

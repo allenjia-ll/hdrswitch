@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Menu bar app: Tab and Shift+Tab move between the text fields in Detect Monitor.
+
 ## [0.3.4] - 2026-10-31
 
 The README now leads with the menu bar app. The app and `hdrctl` are unchanged since 0.3.3. Windows is

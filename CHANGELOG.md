@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Menu bar app: pressing Esc during Detect Monitor asks before stopping.
+
 ### Fixed
 
 - Menu bar app: the note on an unsupported monitor's warning mark appears as soon as the mouse is over it, and works when the app isn't active.

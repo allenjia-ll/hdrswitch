@@ -194,7 +194,9 @@ final class LightTint: NSView {
 final class TranslucentWindow: NSWindow {
     var measure: () -> NSSize = { .zero }   // the SwiftUI content's current size
 
-    override func cancelOperation(_ sender: Any?) { close() }   // Esc, as with the close button
+    var confirmEsc: () -> Bool = { true }   // whether Esc may close the window
+
+    override func cancelOperation(_ sender: Any?) { if confirmEsc() { close() } }   // Esc, as with the close button
 
     // New size for the current content, keeping the top edge where it is.
     func refit() {

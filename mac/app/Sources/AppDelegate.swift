@@ -149,10 +149,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if detectionWindow?.isVisible != true {
             let model = DetectionModel(uuid: settings.selected, name: settings.selectedTitle,
                                        onSaved: { [weak self] in self?.detectedMonitorsChanged() })
-            detectionWindow = makeTranslucentWindow(title: "Detect Monitor",
-                                                    content: DetectionView(model: model, close: { [weak self] in
-                                                        self?.detectionWindow?.close()
-                                                    }))
+            let window = makeTranslucentWindow(title: "Detect Monitor",
+                                               content: DetectionView(model: model, close: { [weak self] in
+                                                   self?.detectionWindow?.close()
+                                               }))
+            window.confirmEsc = { [weak model] in
+                guard model?.inProgress == true else { return true }
+                let alert = NSAlert()
+                alert.messageText = "Stop detecting this monitor?"
+                alert.informativeText = "Your progress will be lost, and nothing will be saved."
+                alert.addButton(withTitle: "Keep Going")   // first, so Return is the safe choice
+                alert.addButton(withTitle: "Stop")
+                return alert.runModal() == .alertSecondButtonReturn
+            }
+            detectionWindow = window
             model.start()
         }
         NSApp.activate(ignoringOtherApps: true)

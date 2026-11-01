@@ -100,6 +100,14 @@ final class DetectionModel: ObservableObject {
     }
     var continueTitle: String { step == .details ? "Save" : "Continue" }
 
+    // Esc would lose the steps done so far. Not at the start, or when it's over.
+    var inProgress: Bool {
+        switch step {
+        case .intro, .done, .failed: return false
+        default: return true
+        }
+    }
+
     // MARK: - Steps
 
     // Reads the monitor's identity (DDC, so on the shared queue).
